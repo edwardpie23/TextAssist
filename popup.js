@@ -25,12 +25,12 @@ $('save-btn').addEventListener('click', () => {
   const model = $('model-select').value;
 
   if (!apiKey) {
-    showStatus('⚠️ Please enter your OpenAI API key.', '#f38ba8');
+    showStatus('⚠️ Please enter your Grok API key.', '#f38ba8');
     return;
   }
 
-  if (!apiKey.startsWith('sk-')) {
-    showStatus('⚠️ API key should start with "sk-".', '#f38ba8');
+  if (!apiKey.startsWith('xai-')) {
+    showStatus('⚠️ Grok API key should start with "xai-".', '#f38ba8');
     return;
   }
 
