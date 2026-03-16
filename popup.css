@@ -1,0 +1,207 @@
+/* TextAssist popup styles */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 360px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* Header */
+header {
+  background: #181825;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #313244;
+}
+
+.logo {
+  font-weight: 800;
+  font-size: 16px;
+  color: #a6e3a1;
+  letter-spacing: 0.3px;
+}
+
+.tagline {
+  font-size: 11px;
+  color: #6c7086;
+}
+
+/* Main */
+main {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a6adc8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  background: #313244;
+  color: #89b4fa;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Inputs */
+input[type="password"],
+input[type="text"],
+select,
+textarea {
+  width: 100%;
+  background: #181825;
+  color: #cdd6f4;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+  resize: vertical;
+}
+
+input[type="password"]:focus,
+input[type="text"]:focus,
+select:focus,
+textarea:focus {
+  border-color: #6366f1;
+}
+
+select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%236c7086' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.input-row input {
+  flex: 1;
+}
+
+.input-row button {
+  background: #313244;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 15px;
+  transition: background 0.15s;
+}
+
+.input-row button:hover {
+  background: #45475a;
+}
+
+.hint {
+  font-size: 11px;
+  color: #6c7086;
+  line-height: 1.5;
+}
+
+.hint a {
+  color: #89b4fa;
+  text-decoration: none;
+}
+
+.hint a:hover {
+  text-decoration: underline;
+}
+
+/* Status */
+#save-status {
+  font-size: 12px;
+  min-height: 18px;
+  text-align: center;
+  color: #a6e3a1;
+}
+
+/* Buttons */
+.btn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+button.primary {
+  width: 100%;
+  padding: 10px 0;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+button.primary:hover {
+  background: #4f46e5;
+}
+
+button.secondary {
+  width: 100%;
+  padding: 9px 0;
+  background: transparent;
+  color: #89b4fa;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+button.secondary:hover {
+  background: #313244;
+  color: #cdd6f4;
+}
+
+/* Footer */
+footer {
+  padding: 10px 16px;
+  background: #181825;
+  border-top: 1px solid #313244;
+  font-size: 11px;
+  color: #45475a;
+  text-align: center;
+}

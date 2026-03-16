@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TextAssist Settings</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span class="logo">✦ TextAssist</span>
+      <span class="tagline">AI Reply Suggester</span>
+    </header>
+
+    <main>
+      <!-- API Key -->
+      <section class="section">
+        <label for="api-key">OpenAI API Key</label>
+        <div class="input-row">
+          <input
+            type="password"
+            id="api-key"
+            placeholder="sk-..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="toggle-key" title="Show/hide key">👁</button>
+        </div>
+        <p class="hint">
+          Your key is stored locally and never leaves your browser except to
+          call OpenAI directly.
+          <a href="https://platform.openai.com/api-keys" target="_blank">Get a key ↗</a>
+        </p>
+      </section>
+
+      <!-- Model -->
+      <section class="section">
+        <label for="model-select">Model</label>
+        <select id="model-select">
+          <option value="gpt-4o-mini">GPT-4o Mini (fast &amp; cheap)</option>
+          <option value="gpt-4o">GPT-4o (best quality)</option>
+          <option value="gpt-3.5-turbo">GPT-3.5 Turbo (legacy)</option>
+        </select>
+      </section>
+
+      <!-- Style Profile -->
+      <section class="section">
+        <label for="style-profile">
+          Your Style Profile
+          <span class="badge">Personalizes AI replies</span>
+        </label>
+        <textarea
+          id="style-profile"
+          rows="7"
+          placeholder="Describe how you communicate. Examples:&#10;- Short, direct messages&#10;- Friendly but professional&#10;- Confident on pricing&#10;- Uses light humor&#10;- Avoids long paragraphs&#10;&#10;Paste some of your past messages here — the AI will learn your tone."
+        ></textarea>
+        <p class="hint">
+          Tip: paste 5–10 of your real past replies here, or write a few bullet points describing your style.
+        </p>
+      </section>
+
+      <!-- Status indicator -->
+      <div id="save-status"></div>
+
+      <!-- Buttons -->
+      <div class="btn-row">
+        <button id="save-btn" class="primary">Save Settings</button>
+        <button id="open-panel-btn" class="secondary">Open Panel on Page</button>
+      </div>
+    </main>
+
+    <footer>
+      <span>Works on Facebook, Gmail, Turo, WhatsApp &amp; more.</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
