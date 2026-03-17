@@ -13,24 +13,14 @@
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
-
-  // The last input/textarea/contenteditable the user touched — updated on focusin
-  let lastFocusedInput = null;
-  // Locked at Generate-click time so Insert always uses the same target
   let lockedInsertTarget = null;
-  // True when waiting for the user to click a target
-  let pickingTarget = false;
 
-  // Never track focus inside our own panel
+  // Track focus so we always know the last input the user touched
   document.addEventListener('focusin', (e) => {
     const el = e.target;
     if (isOurElement(el)) return;
-    if (
-      el.tagName === 'TEXTAREA' ||
-      el.tagName === 'INPUT' ||
-      el.contentEditable === 'true'
-    ) {
-      lastFocusedInput = el;
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.contentEditable === 'true') {
+      if (!isSearchInput(el)) lockedInsertTarget = el;
     }
   }, true);
 
@@ -57,12 +47,6 @@
       </div>
       <div id="ta-body">
 
-        <!-- Target indicator -->
-        <div id="ta-target-row">
-          <span id="ta-target-label">Insert into: <strong id="ta-target-name">not set</strong></span>
-          <button id="ta-pick-target">Pick ✎</button>
-        </div>
-
         <!-- Status -->
         <div id="ta-status">Click <strong>Generate Replies</strong> to get AI suggestions.</div>
 
@@ -71,8 +55,8 @@
 
         <!-- Manual conversation paste (shown when auto-read fails) -->
         <div id="ta-manual-section" style="display:none">
-          <div class="ta-manual-label">Paste the conversation here:</div>
-          <textarea id="ta-manual-input" rows="4" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
+          <div class="ta-manual-label">Could not auto-read the conversation. Paste it here:</div>
+          <textarea id="ta-manual-input" rows="5" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
         </div>
 
         <!-- User draft / intent -->
@@ -105,12 +89,10 @@
     panel.style.bottom = '80px';
     panel.style.right = '20px';
 
-    // Auto-detect insert target when panel opens
-    lockedInsertTarget = null;
-    lockedInsertTarget = findInputTarget();
+    // Auto-detect insert target on open (respects any focus that happened before)
+    if (!lockedInsertTarget) lockedInsertTarget = findInputTarget();
 
     bindPanelEvents();
-    updateTargetLabel();
   }
 
   function bindPanelEvents() {
@@ -119,7 +101,6 @@
     panel.querySelector('#ta-minimize').addEventListener('click', minimizePanel);
     panel.querySelector('#ta-expand').addEventListener('click', expandPanel);
     panel.querySelector('#ta-generate-btn').addEventListener('click', onGenerate);
-    panel.querySelector('#ta-pick-target').addEventListener('click', startPickTarget);
     panel.querySelectorAll('.ta-tone-btn').forEach(btn => {
       btn.addEventListener('click', () => onGenerate(btn.dataset.tone));
     });
@@ -141,79 +122,6 @@
     panel.querySelector('#ta-header').style.display = 'flex';
     panel.querySelector('#ta-minimized-bar').style.display = 'none';
     panel.style.width = '';
-  }
-
-  // ─── Pick Target ──────────────────────────────────────────────────────────
-
-  function startPickTarget() {
-    pickingTarget = true;
-    setStatus('👆 Click the chat input box you want to type into…');
-    minimizePanel();
-
-    document.addEventListener('click', onPickTargetClick, { capture: true, once: true });
-    // Cancel on Escape
-    document.addEventListener('keydown', cancelPickTarget, { once: true });
-  }
-
-  function onPickTargetClick(e) {
-    if (isOurElement(e.target)) {
-      // They clicked our panel — cancel
-      pickingTarget = false;
-      expandPanel();
-      setStatus('Pick cancelled.');
-      return;
-    }
-
-    const el = e.target;
-    if (
-      el.tagName === 'TEXTAREA' ||
-      el.tagName === 'INPUT' ||
-      el.contentEditable === 'true'
-    ) {
-      lockedInsertTarget = el;
-      lastFocusedInput = el;
-      pickingTarget = false;
-      expandPanel();
-      updateTargetLabel();
-      setStatus('✅ Target set! Now click Generate Replies.');
-    } else {
-      pickingTarget = false;
-      expandPanel();
-      setStatus('⚠️ That doesn\'t look like a text box. Try clicking directly inside the message input.');
-    }
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  function cancelPickTarget(e) {
-    if (e.key === 'Escape') {
-      pickingTarget = false;
-      expandPanel();
-      setStatus('Pick cancelled.');
-      document.removeEventListener('click', onPickTargetClick, { capture: true });
-    }
-  }
-
-  function updateTargetLabel() {
-    if (!panel) return;
-    const nameEl = panel.querySelector('#ta-target-name');
-    const target = lockedInsertTarget || lastFocusedInput;
-    if (!target) {
-      nameEl.textContent = 'not set — click Pick ✎';
-      nameEl.style.color = '#f38ba8';
-    } else {
-      nameEl.textContent = describeElement(target);
-      nameEl.style.color = '#a6e3a1';
-    }
-  }
-
-  function describeElement(el) {
-    if (!el) return 'unknown';
-    const tag = el.tagName.toLowerCase();
-    const ph = el.placeholder || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '';
-    if (ph) return `${tag} "${ph.slice(0, 30)}"`;
-    const cls = Array.from(el.classList).slice(0, 2).join('.');
-    return cls ? `${tag}.${cls}` : tag;
   }
 
   // ─── Drag ─────────────────────────────────────────────────────────────────
@@ -248,46 +156,34 @@
   async function onGenerate(toneModifier) {
     const tone = typeof toneModifier === 'string' ? toneModifier : null;
 
-    // Lock the insert target NOW — before anything else changes focus
-    lockedInsertTarget = lockedInsertTarget || lastFocusedInput || findInputTarget();
-    updateTargetLabel();
+    // Re-detect insert target every time in case focus changed
+    lockedInsertTarget = lockedInsertTarget || findInputTarget();
 
     setStatus('Reading conversation…');
     setReplies([]);
 
-    // Try auto-reading first
     let conversation = readConversation();
 
-    // If auto-read failed, check if user pasted manually
+    // If auto-read failed, check manual paste
     if (!conversation.length) {
       const manualText = panel.querySelector('#ta-manual-input')?.value?.trim();
-      if (manualText) {
-        conversation = parseManualText(manualText);
-      }
+      if (manualText) conversation = parseManualText(manualText);
     }
 
-    // Still nothing — show manual paste area and stop
+    // Still nothing — show manual paste area
     if (!conversation.length) {
       panel.querySelector('#ta-manual-section').style.display = 'block';
-      setStatus('⚠️ Could not auto-read this page\'s conversation. Paste the chat messages in the box below, then click Generate again.');
+      setStatus('⚠️ Could not auto-read this conversation. Paste the chat messages in the box below, then click Generate again.');
       return;
     }
 
-    // Read optional user draft/intent
     const userDraft = panel.querySelector('#ta-draft-input')?.value?.trim() || '';
-
     setStatus(`Generating replies based on ${conversation.length} messages…`);
     panel.querySelector('#ta-generate-btn').disabled = true;
 
     try {
       const settings = await getSettings();
-      const payload = {
-        conversation,
-        styleProfile: settings.styleProfile,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        userDraft,
-      };
+      const payload = { conversation, styleProfile: settings.styleProfile, apiKey: settings.apiKey, model: settings.model, userDraft };
 
       if (tone) {
         const toneMap = {
@@ -301,15 +197,8 @@
 
       const response = await chrome.runtime.sendMessage({ type: 'GENERATE_REPLIES', payload });
 
-      if (response.error) {
-        setStatus(`❌ ${response.error}`);
-        return;
-      }
-
-      if (!response.replies || !response.replies.length) {
-        setStatus('No replies generated. Try again.');
-        return;
-      }
+      if (response.error) { setStatus(`❌ ${response.error}`); return; }
+      if (!response.replies || !response.replies.length) { setStatus('No replies generated. Try again.'); return; }
 
       setStatus('Click a reply to insert it into the chat box:');
       setReplies(response.replies);
@@ -321,11 +210,10 @@
   }
 
   function parseManualText(text) {
-    // Split pasted text into lines and treat as alternating speakers
     return text.split('\n')
       .map(l => l.trim())
       .filter(l => l.length > 0)
-      .map((text, i) => ({ sender: i % 2 === 0 ? 'Them' : 'You', text }));
+      .map((t, i) => ({ sender: i % 2 === 0 ? 'Them' : 'You', text: t }));
   }
 
   function setStatus(text) {
@@ -359,30 +247,22 @@
     const target = lockedInsertTarget || findInputTarget();
 
     if (!target || !document.contains(target)) {
-      setStatus('⚠️ No target set. Click <strong>Pick ✎</strong> and then click the chat input box.');
+      setStatus('⚠️ Could not find the chat input. Click inside the message box first, then try again.');
       return;
     }
 
     if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-      // Use native setter so React/Vue state picks it up
-      const proto = target.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
+      const proto = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
       const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
-      if (nativeSetter && nativeSetter.set) {
-        nativeSetter.set.call(target, text);
-      } else {
-        target.value = text;
-      }
+      if (nativeSetter && nativeSetter.set) nativeSetter.set.call(target, text);
+      else target.value = text;
       target.dispatchEvent(new Event('input', { bubbles: true }));
       target.dispatchEvent(new Event('change', { bubbles: true }));
       target.focus();
     } else if (target.contentEditable === 'true') {
       target.focus();
-      // Clear existing content and insert new text
       document.execCommand('selectAll', false, null);
       document.execCommand('insertText', false, text);
-      // Fallback if execCommand didn't work
       if (!target.textContent.includes(text.slice(0, 20))) {
         target.textContent = text;
         target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
@@ -392,7 +272,7 @@
     setStatus('✅ Inserted! Review and press Send when ready.');
   }
 
-  // ─── Find Input (excludes our panel + search boxes, prefers message inputs) ─
+  // ─── Find Insert Target ───────────────────────────────────────────────────
 
   function isSearchInput(el) {
     const ph = (el.placeholder || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '').toLowerCase();
@@ -401,7 +281,7 @@
   }
 
   function findInputTarget() {
-    // Priority 1: explicit message-like placeholders (Thumbtack "Type a message...", etc.)
+    // Priority 1: message-like placeholder text
     const messagePlaceholders = [
       'textarea[placeholder*="message" i]',
       'textarea[placeholder*="reply" i]',
@@ -412,91 +292,40 @@
       '[contenteditable][aria-label*="message" i]',
     ];
     for (const sel of messagePlaceholders) {
-      const els = document.querySelectorAll(sel);
-      for (const el of els) {
+      for (const el of document.querySelectorAll(sel)) {
         if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    // Priority 2: role-based contenteditable (Facebook, WhatsApp, etc.)
-    const roleSelectors = [
-      '[contenteditable="true"][role="textbox"]',
-      '[contenteditable="true"].Am.Al.editable',
-      '[contenteditable="true"][data-tab]',
-    ];
-    for (const sel of roleSelectors) {
-      const els = document.querySelectorAll(sel);
-      for (const el of els) {
+    // Priority 2: role-based contenteditable
+    for (const sel of ['[contenteditable="true"][role="textbox"]']) {
+      for (const el of document.querySelectorAll(sel)) {
         if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    // Priority 3: any visible textarea that is NOT a search box
-    const textareas = document.querySelectorAll('textarea:not([readonly]):not([disabled])');
-    for (const el of textareas) {
+    // Priority 3: any visible textarea that is not a search box
+    for (const el of document.querySelectorAll('textarea:not([readonly]):not([disabled])')) {
       if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
     }
 
-    // Priority 4: any contenteditable (last resort, skip search)
-    const editables = document.querySelectorAll('[contenteditable="true"]');
-    for (const el of editables) {
+    // Priority 4: any contenteditable
+    for (const el of document.querySelectorAll('[contenteditable="true"]')) {
       if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
     }
 
     return null;
   }
 
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
   function isVisible(el) {
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
   }
 
-  // ─── Conversation Reader ──────────────────────────────────────────────────
-
-  // IMPORTANT: every reader must exclude our own panel elements.
-  function notOurs(el) {
-    return !isOurElement(el);
-  }
-
-  function readConversation() {
-    const strategies = [
-      readThumbtrack,
-      readFacebookMessenger,
-      readGmail,
-      readWhatsAppWeb,
-      readTuro,
-      readGenericChat,
-    ];
-    // Note: NO generic fallback that reads all divs — that caused the panel-reading bug.
-
-    for (const fn of strategies) {
-      try {
-        const result = fn();
-        if (result && result.length >= 2) return result;
-      } catch (_) {}
-    }
-    return [];
-  }
-
-  // Returns true if text looks like a real human message (not code or UI chrome)
-  function looksLikeMessage(text) {
-    if (!text || text.length < 3 || text.length > 1500) return false;
-    // Skip timestamps-only strings like "12:47 pm"
-    if (/^\d{1,2}:\d{2}\s*(am|pm)?$/i.test(text)) return false;
-    // Skip anything that looks like code
-    const codeSignals = ['{', '}', '=>', 'function', 'const ', 'var ', 'let ', 'import ', 'export ', '();', '===', '!==', '&&', '||', '/*', '*/', '//', 'undefined', 'null', 'getElementById'];
-    const codeCount = codeSignals.filter(s => text.includes(s)).length;
-    if (codeCount >= 2) return false;
-    // Skip if it's mostly non-alphanumeric
-    const alphaRatio = (text.match(/[a-zA-Z ]/g) || []).length / text.length;
-    if (alphaRatio < 0.4) return false;
-    return true;
-  }
-
-  // Returns true if element is actually rendered on screen (not hidden by CSS)
   function isReallyVisible(el) {
     if (!isVisible(el)) return false;
-    // Skip elements inside script/style/pre/code tags
     let node = el;
     while (node && node !== document.body) {
       const tag = node.tagName?.toLowerCase();
@@ -504,143 +333,153 @@
       node = node.parentElement;
     }
     try {
-      const style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      const s = window.getComputedStyle(el);
+      if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
     } catch (_) {}
     return true;
   }
 
-  function readThumbtrack() {
-    // Thumbtack uses a split-pane layout: left = thread list, right = active conversation.
-    // Messages are styled as left-aligned (customer) vs right-aligned (you/Thumbtack).
+  // Returns true if a string looks like a real chat message (not code, not UI labels)
+  function looksLikeMessage(text) {
+    if (!text || text.length < 3 || text.length > 2000) return false;
+    if (/^\d{1,2}:\d{2}\s*(am|pm)?$/i.test(text)) return false; // pure timestamp
+    // Reject code-like strings
+    const codeSignals = ['{', '}', '=>', 'function(', 'const ', 'var ', 'let ', 'import ', 'export ', '();', '===', '!==', '/*', '*/', 'getElementById', 'querySelector'];
+    if (codeSignals.filter(s => text.includes(s)).length >= 2) return false;
+    // Require mostly alphabetic characters
+    const alphaRatio = (text.match(/[a-zA-Z ]/g) || []).length / text.length;
+    return alphaRatio >= 0.4;
+  }
 
-    // Strategy A: look for explicit sent/received class patterns
-    const sentSelectors = ['[class*="sent"]', '[class*="outgoing"]', '[class*="outbound"]'];
-    const recvSelectors = ['[class*="received"]', '[class*="incoming"]', '[class*="inbound"]'];
+  // ─── Conversation Reader ──────────────────────────────────────────────────
+  //
+  // Algorithm:
+  //   1. Anchor on the message input (textarea/contenteditable).
+  //   2. Walk UP the DOM from that input looking for the container whose
+  //      DIRECT CHILDREN score highest as a list of chat messages.
+  //   3. Extract each child as a message and determine sender via:
+  //        a. Class names containing sent/received/outgoing/incoming keywords
+  //        b. CSS: align-self:flex-end or margin-left:auto  →  "You"
+  //        c. X position relative to container midpoint
+  //   4. Fall back to a page-wide scan if no input anchor found.
 
-    for (let i = 0; i < sentSelectors.length; i++) {
-      const sent = [...document.querySelectorAll(sentSelectors[i])]
-        .filter(notOurs).filter(el => looksLikeMessage(el.textContent.trim()));
-      const recv = [...document.querySelectorAll(recvSelectors[i])]
-        .filter(notOurs).filter(el => looksLikeMessage(el.textContent.trim()));
-      if (sent.length >= 1 && recv.length >= 1) {
-        const all = [
-          ...sent.map(el => ({ el, sender: 'You' })),
-          ...recv.map(el => ({ el, sender: 'Them' })),
-        ].sort((a, b) => a.el.compareDocumentPosition(b.el) & 4 ? -1 : 1);
-        const result = all.map(({ el, sender }) => ({ sender, text: el.textContent.trim() }))
-                          .filter(m => looksLikeMessage(m.text));
-        if (result.length >= 2) return result;
+  function readConversation() {
+    const inputEl = findInputTarget();
+
+    // Walk up from input to find the best message-list container
+    let bestContainer = null;
+    let bestScore = 2; // minimum 3 message children required
+
+    let node = inputEl ? inputEl.parentElement : null;
+    for (let d = 0; d < 20; d++) {
+      if (!node || node === document.body) break;
+      const score = countMessageChildren(node, inputEl);
+      if (score > bestScore) {
+        bestScore = score;
+        bestContainer = node;
+      }
+      node = node.parentElement;
+    }
+
+    // If walking up didn't find it, do a page-wide scan
+    if (!bestContainer) {
+      bestContainer = scanPageForConversation(inputEl);
+    }
+
+    if (!bestContainer) return [];
+
+    return extractMessages(bestContainer, inputEl);
+  }
+
+  // Count how many direct children of `container` look like chat message bubbles
+  function countMessageChildren(container, inputEl) {
+    return [...container.children].filter(el => {
+      if (isOurElement(el)) return false;
+      if (inputEl && (el === inputEl || el.contains(inputEl))) return false;
+      if (!isReallyVisible(el)) return false;
+      return looksLikeMessage(el.textContent.trim());
+    }).length;
+  }
+
+  // Scan entire page for the div whose direct children best form a conversation
+  function scanPageForConversation(inputEl) {
+    let best = null;
+    let bestScore = 2;
+
+    const candidates = document.querySelectorAll('div, ul, ol, section, main, article');
+    for (const el of candidates) {
+      if (isOurElement(el)) continue;
+      const childCount = el.children.length;
+      if (childCount < 3 || childCount > 200) continue;
+      if (!isVisible(el)) continue;
+      const score = countMessageChildren(el, inputEl);
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
       }
     }
 
-    // Strategy B: anchor on "Type a message" input → walk up to chat pane →
-    // use X position on screen to determine direction. Filter aggressively.
-    const inputEl = document.querySelector('textarea[placeholder*="message" i], textarea[placeholder*="type" i]');
-    if (inputEl) {
-      let pane = inputEl.parentElement;
-      for (let d = 0; d < 10; d++) {
-        if (!pane || pane === document.body) break;
+    return best;
+  }
 
-        // Collect leaf text nodes that are NOT in the left sidebar
-        const paneRect = pane.getBoundingClientRect();
-        if (paneRect.width < 300) { pane = pane.parentElement; continue; } // too narrow — still in sidebar
+  // Extract message objects from a container's direct children
+  function extractMessages(container, inputEl) {
+    const rect = container.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
 
-        const midX = paneRect.left + paneRect.width / 2;
+    const messages = [];
+    for (const el of container.children) {
+      if (isOurElement(el)) continue;
+      if (inputEl && (el === inputEl || el.contains(inputEl))) continue;
+      if (!isReallyVisible(el)) continue;
 
-        const leaves = [...pane.querySelectorAll('p, span, div')]
-          .filter(el => {
-            if (isOurElement(el)) return false;
-            if (el === inputEl) return false;
-            if (!isReallyVisible(el)) return false;
-            // Must be a "leaf" — no block children that contain text
-            const blockChildren = [...el.children].filter(c => {
-              const s = window.getComputedStyle(c);
-              return s.display !== 'inline' && c.textContent.trim().length > 0;
-            });
-            if (blockChildren.length > 0) return false;
-            return looksLikeMessage(el.textContent.trim());
-          });
+      const text = el.textContent.trim();
+      if (!looksLikeMessage(text)) continue;
 
-        if (leaves.length >= 2) {
-          const paneLeft = paneRect.left;
-          // Filter to only elements inside the right (chat) portion of the pane
-          const chatLeaves = leaves.filter(el => {
-            const r = el.getBoundingClientRect();
-            return r.left >= paneLeft + 20; // exclude left sidebar elements
-          });
-
-          if (chatLeaves.length >= 2) {
-            return chatLeaves.slice(-16).map(el => {
-              const rect = el.getBoundingClientRect();
-              const sender = rect.left > midX ? 'You' : 'Them';
-              return { sender, text: el.textContent.trim() };
-            }).filter(m => looksLikeMessage(m.text));
-          }
-        }
-
-        pane = pane.parentElement;
-      }
+      messages.push({ sender: determineSender(el, midX), text });
     }
 
-    return [];
+    return messages;
   }
 
-  function readFacebookMessenger() {
-    const rows = document.querySelectorAll('[data-testid="messenger-thread-view"] [class*="message"]');
-    return extractFromElements([...rows].filter(notOurs), el => el.textContent.trim());
-  }
+  // Determine whether a message element was sent by "You" or "Them"
+  function determineSender(el, midX) {
+    // 1. Class-name keywords (most reliable when present)
+    const allClasses = collectClassNames(el);
+    if (/\b(sent|outgoing|outbound|message-out|msg-out|self|mine|owner)\b/.test(allClasses)) return 'You';
+    if (/\b(received|incoming|inbound|message-in|msg-in|other|theirs|remote)\b/.test(allClasses)) return 'Them';
 
-  function readGmail() {
-    const messages = document.querySelectorAll('.h7, .gs, [data-message-id]');
-    return [...messages].filter(notOurs).map((el, i) => {
-      const sender = el.querySelector('.gD')?.getAttribute('email') ||
-                     el.querySelector('.go')?.textContent ||
-                     (i % 2 === 0 ? 'Them' : 'You');
-      const body = el.querySelector('.a3s, .adP')?.textContent?.trim() || el.textContent.trim();
-      return { sender, text: body };
-    }).filter(m => m.text.length > 0);
-  }
+    // 2. CSS on the element itself
+    try {
+      const s = window.getComputedStyle(el);
+      if (s.alignSelf === 'flex-end' || s.justifySelf === 'flex-end') return 'You';
+      if (s.textAlign === 'right') return 'You';
+      if (s.marginLeft === 'auto' && s.marginRight !== 'auto') return 'You';
+    } catch (_) {}
 
-  function readWhatsAppWeb() {
-    const rows = document.querySelectorAll('[class*="message-in"], [class*="message-out"]');
-    return [...rows].filter(notOurs).map(el => {
-      const isOut = el.className.includes('message-out');
-      const text = el.querySelector('[class*="copyable-text"], span[dir]')?.textContent?.trim() || '';
-      return { sender: isOut ? 'You' : 'Them', text };
-    }).filter(m => m.text.length > 0);
-  }
-
-  function readTuro() {
-    const rows = document.querySelectorAll('[class*="chat-message"], [class*="ChatMessage"], [class*="message-bubble"]');
-    return extractFromElements([...rows].filter(notOurs), el => el.textContent.trim());
-  }
-
-  function readGenericChat() {
-    const selectors = [
-      '[role="listitem"]',
-      '[data-message]',
-      '[class*="message-row"]',
-      '[class*="msg-row"]',
-      '[class*="chat-row"]',
-      '[class*="ConversationItem"]',
-      '[class*="thread"]',
-    ];
-    for (const sel of selectors) {
-      const els = [...document.querySelectorAll(sel)].filter(notOurs);
-      if (els.length >= 2) {
-        const results = extractFromElements(els, el => el.textContent.trim());
-        if (results.length >= 2) return results;
-      }
+    // 3. CSS on immediate children (message bubble is often nested one level)
+    for (const child of el.children) {
+      try {
+        const cs = window.getComputedStyle(child);
+        if (cs.alignSelf === 'flex-end' || cs.marginLeft === 'auto') return 'You';
+      } catch (_) {}
     }
-    return [];
+
+    // 4. X position — if the element sits in the right half of the container
+    const r = el.getBoundingClientRect();
+    const elMid = r.left + r.width / 2;
+    if (elMid > midX + 20) return 'You'; // clear right-side bias
+
+    return 'Them';
   }
 
-  function extractFromElements(els, getText) {
-    return els.map((el, i) => ({
-      sender: i % 2 === 0 ? 'Them' : 'You',
-      text: getText(el),
-    })).filter(m => m.text && m.text.length > 0 && m.text.length < 2000);
+  // Collect all class names from an element and its descendants (space-separated, lowercase)
+  function collectClassNames(el) {
+    const parts = [el.className || ''];
+    for (const child of el.querySelectorAll('[class]')) {
+      parts.push(child.className || '');
+    }
+    return parts.join(' ').toLowerCase();
   }
 
   // ─── Settings ─────────────────────────────────────────────────────────────
