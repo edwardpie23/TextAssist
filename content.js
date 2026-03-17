@@ -105,6 +105,10 @@
     panel.style.bottom = '80px';
     panel.style.right = '20px';
 
+    // Auto-detect insert target when panel opens
+    lockedInsertTarget = null;
+    lockedInsertTarget = findInputTarget();
+
     bindPanelEvents();
     updateTargetLabel();
   }
@@ -388,26 +392,33 @@
     setStatus('✅ Inserted! Review and press Send when ready.');
   }
 
-  // ─── Find Input (excludes our panel, prefers message-like inputs) ─────────
+  // ─── Find Input (excludes our panel + search boxes, prefers message inputs) ─
+
+  function isSearchInput(el) {
+    const ph = (el.placeholder || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '').toLowerCase();
+    const name = (el.name || el.id || '').toLowerCase();
+    return ph.includes('search') || name.includes('search');
+  }
 
   function findInputTarget() {
-    // Priority 1: placeholder-based (catches Thumbtack "Type a message...", etc.)
-    const placeholderSelectors = [
+    // Priority 1: explicit message-like placeholders (Thumbtack "Type a message...", etc.)
+    const messagePlaceholders = [
       'textarea[placeholder*="message" i]',
       'textarea[placeholder*="reply" i]',
       'textarea[placeholder*="write" i]',
+      'textarea[placeholder*="type" i]',
       '[contenteditable][data-placeholder*="message" i]',
       '[contenteditable][aria-placeholder*="message" i]',
-      '[contenteditable][placeholder*="message" i]',
+      '[contenteditable][aria-label*="message" i]',
     ];
-    for (const sel of placeholderSelectors) {
+    for (const sel of messagePlaceholders) {
       const els = document.querySelectorAll(sel);
       for (const el of els) {
-        if (!isOurElement(el) && isVisible(el)) return el;
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    // Priority 2: role/site-specific
+    // Priority 2: role-based contenteditable (Facebook, WhatsApp, etc.)
     const roleSelectors = [
       '[contenteditable="true"][role="textbox"]',
       '[contenteditable="true"].Am.Al.editable',
@@ -416,16 +427,20 @@
     for (const sel of roleSelectors) {
       const els = document.querySelectorAll(sel);
       for (const el of els) {
-        if (!isOurElement(el) && isVisible(el)) return el;
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    // Priority 3: any visible textarea/input
-    for (const sel of ['textarea:not([readonly]):not([disabled])', 'input[type="text"]:not([readonly]):not([disabled])', '[contenteditable="true"]']) {
-      const els = document.querySelectorAll(sel);
-      for (const el of els) {
-        if (!isOurElement(el) && isVisible(el)) return el;
-      }
+    // Priority 3: any visible textarea that is NOT a search box
+    const textareas = document.querySelectorAll('textarea:not([readonly]):not([disabled])');
+    for (const el of textareas) {
+      if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+    }
+
+    // Priority 4: any contenteditable (last resort, skip search)
+    const editables = document.querySelectorAll('[contenteditable="true"]');
+    for (const el of editables) {
+      if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
     }
 
     return null;
@@ -463,77 +478,107 @@
     return [];
   }
 
+  // Returns true if text looks like a real human message (not code or UI chrome)
+  function looksLikeMessage(text) {
+    if (!text || text.length < 3 || text.length > 1500) return false;
+    // Skip timestamps-only strings like "12:47 pm"
+    if (/^\d{1,2}:\d{2}\s*(am|pm)?$/i.test(text)) return false;
+    // Skip anything that looks like code
+    const codeSignals = ['{', '}', '=>', 'function', 'const ', 'var ', 'let ', 'import ', 'export ', '();', '===', '!==', '&&', '||', '/*', '*/', '//', 'undefined', 'null', 'getElementById'];
+    const codeCount = codeSignals.filter(s => text.includes(s)).length;
+    if (codeCount >= 2) return false;
+    // Skip if it's mostly non-alphanumeric
+    const alphaRatio = (text.match(/[a-zA-Z ]/g) || []).length / text.length;
+    if (alphaRatio < 0.4) return false;
+    return true;
+  }
+
+  // Returns true if element is actually rendered on screen (not hidden by CSS)
+  function isReallyVisible(el) {
+    if (!isVisible(el)) return false;
+    // Skip elements inside script/style/pre/code tags
+    let node = el;
+    while (node && node !== document.body) {
+      const tag = node.tagName?.toLowerCase();
+      if (['script', 'style', 'pre', 'code', 'noscript', 'template'].includes(tag)) return false;
+      node = node.parentElement;
+    }
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    } catch (_) {}
+    return true;
+  }
+
   function readThumbtrack() {
     // Thumbtack uses a split-pane layout: left = thread list, right = active conversation.
-    // Messages are styled as left-aligned (customer) vs right-aligned (you).
-    // We try several selector patterns since class names may be hashed.
+    // Messages are styled as left-aligned (customer) vs right-aligned (you/Thumbtack).
 
     // Strategy A: look for explicit sent/received class patterns
-    const sentSelectors   = ['[class*="sent"]', '[class*="outgoing"]', '[class*="outbound"]', '[class*="right"]'];
-    const recvSelectors   = ['[class*="received"]', '[class*="incoming"]', '[class*="inbound"]', '[class*="left"]'];
+    const sentSelectors = ['[class*="sent"]', '[class*="outgoing"]', '[class*="outbound"]'];
+    const recvSelectors = ['[class*="received"]', '[class*="incoming"]', '[class*="inbound"]'];
 
     for (let i = 0; i < sentSelectors.length; i++) {
-      const sent = [...document.querySelectorAll(sentSelectors[i])].filter(notOurs).filter(el => el.textContent.trim().length > 0);
-      const recv = [...document.querySelectorAll(recvSelectors[i])].filter(notOurs).filter(el => el.textContent.trim().length > 0);
+      const sent = [...document.querySelectorAll(sentSelectors[i])]
+        .filter(notOurs).filter(el => looksLikeMessage(el.textContent.trim()));
+      const recv = [...document.querySelectorAll(recvSelectors[i])]
+        .filter(notOurs).filter(el => looksLikeMessage(el.textContent.trim()));
       if (sent.length >= 1 && recv.length >= 1) {
-        // Merge and sort by DOM order
         const all = [
           ...sent.map(el => ({ el, sender: 'You' })),
           ...recv.map(el => ({ el, sender: 'Them' })),
         ].sort((a, b) => a.el.compareDocumentPosition(b.el) & 4 ? -1 : 1);
         const result = all.map(({ el, sender }) => ({ sender, text: el.textContent.trim() }))
-                          .filter(m => m.text.length > 0 && m.text.length < 2000);
+                          .filter(m => looksLikeMessage(m.text));
         if (result.length >= 2) return result;
       }
     }
 
-    // Strategy B: look for a scrollable message container and read child elements,
-    // guessing direction by flex-end / margin-left CSS or text alignment.
-    const containerSelectors = [
-      '[class*="messageList"]', '[class*="MessageList"]',
-      '[class*="message-list"]', '[class*="thread"]',
-      '[class*="conversation"]', '[class*="chatArea"]',
-      '[class*="messages"]', '[class*="Messages"]',
-    ];
-    for (const cSel of containerSelectors) {
-      const container = document.querySelector(cSel);
-      if (!container || isOurElement(container)) continue;
-      const children = [...container.querySelectorAll('*')]
-        .filter(el => el.children.length === 0 && el.textContent.trim().length > 5 && !isOurElement(el));
-      if (children.length >= 2) {
-        return children.slice(-20).map((el, i) => {
-          const style = window.getComputedStyle(el.parentElement || el);
-          const isRight = style.textAlign === 'right' ||
-                          style.alignSelf === 'flex-end' ||
-                          style.marginLeft === 'auto';
-          return { sender: isRight ? 'You' : 'Them', text: el.textContent.trim() };
-        }).filter(m => m.text.length > 0);
-      }
-    }
-
-    // Strategy C: Thumbtack-specific — look for elements near a "Type a message" textarea
-    const inputEl = document.querySelector('textarea[placeholder*="message" i]');
+    // Strategy B: anchor on "Type a message" input → walk up to chat pane →
+    // use X position on screen to determine direction. Filter aggressively.
+    const inputEl = document.querySelector('textarea[placeholder*="message" i], textarea[placeholder*="type" i]');
     if (inputEl) {
-      // Walk up to find the chat pane, then grab all leaf text nodes
       let pane = inputEl.parentElement;
-      for (let d = 0; d < 8; d++) {
-        if (!pane) break;
-        const leaves = [...pane.querySelectorAll('*')]
-          .filter(el => el.children.length === 0 &&
-                        el.textContent.trim().length > 5 &&
-                        el.textContent.trim().length < 1000 &&
-                        !isOurElement(el) &&
-                        el !== inputEl);
-        if (leaves.length >= 4) {
-          // Use position — elements on the right half of the screen are likely "You"
-          const paneRect = pane.getBoundingClientRect();
-          const midX = paneRect.left + paneRect.width / 2;
-          return leaves.slice(-20).map(el => {
-            const rect = el.getBoundingClientRect();
-            const sender = rect.left > midX ? 'You' : 'Them';
-            return { sender, text: el.textContent.trim() };
-          }).filter(m => m.text.length > 0);
+      for (let d = 0; d < 10; d++) {
+        if (!pane || pane === document.body) break;
+
+        // Collect leaf text nodes that are NOT in the left sidebar
+        const paneRect = pane.getBoundingClientRect();
+        if (paneRect.width < 300) { pane = pane.parentElement; continue; } // too narrow — still in sidebar
+
+        const midX = paneRect.left + paneRect.width / 2;
+
+        const leaves = [...pane.querySelectorAll('p, span, div')]
+          .filter(el => {
+            if (isOurElement(el)) return false;
+            if (el === inputEl) return false;
+            if (!isReallyVisible(el)) return false;
+            // Must be a "leaf" — no block children that contain text
+            const blockChildren = [...el.children].filter(c => {
+              const s = window.getComputedStyle(c);
+              return s.display !== 'inline' && c.textContent.trim().length > 0;
+            });
+            if (blockChildren.length > 0) return false;
+            return looksLikeMessage(el.textContent.trim());
+          });
+
+        if (leaves.length >= 2) {
+          const paneLeft = paneRect.left;
+          // Filter to only elements inside the right (chat) portion of the pane
+          const chatLeaves = leaves.filter(el => {
+            const r = el.getBoundingClientRect();
+            return r.left >= paneLeft + 20; // exclude left sidebar elements
+          });
+
+          if (chatLeaves.length >= 2) {
+            return chatLeaves.slice(-16).map(el => {
+              const rect = el.getBoundingClientRect();
+              const sender = rect.left > midX ? 'You' : 'Them';
+              return { sender, text: el.textContent.trim() };
+            }).filter(m => looksLikeMessage(m.text));
+          }
         }
+
         pane = pane.parentElement;
       }
     }
