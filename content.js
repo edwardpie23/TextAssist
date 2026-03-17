@@ -72,7 +72,13 @@
         <!-- Manual conversation paste (shown when auto-read fails) -->
         <div id="ta-manual-section" style="display:none">
           <div class="ta-manual-label">Paste the conversation here:</div>
-          <textarea id="ta-manual-input" rows="5" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
+          <textarea id="ta-manual-input" rows="4" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
+        </div>
+
+        <!-- User draft / intent -->
+        <div id="ta-draft-section">
+          <div class="ta-draft-label">Your draft <span class="ta-optional">(optional)</span></div>
+          <textarea id="ta-draft-input" rows="2" placeholder="e.g. I can't do that job, ask for more details, tell them the price is $200…"></textarea>
         </div>
 
         <!-- Actions -->
@@ -263,6 +269,9 @@
       return;
     }
 
+    // Read optional user draft/intent
+    const userDraft = panel.querySelector('#ta-draft-input')?.value?.trim() || '';
+
     setStatus(`Generating replies based on ${conversation.length} messages…`);
     panel.querySelector('#ta-generate-btn').disabled = true;
 
@@ -273,6 +282,7 @@
         styleProfile: settings.styleProfile,
         apiKey: settings.apiKey,
         model: settings.model,
+        userDraft,
       };
 
       if (tone) {
@@ -378,24 +388,46 @@
     setStatus('✅ Inserted! Review and press Send when ready.');
   }
 
-  // ─── Find Input (fallback, excludes our panel) ────────────────────────────
+  // ─── Find Input (excludes our panel, prefers message-like inputs) ─────────
 
   function findInputTarget() {
-    const selectors = [
-      '[contenteditable="true"][role="textbox"]',
-      '[contenteditable="true"].Am.Al.editable',
-      '[contenteditable="true"][data-tab]',
-      '[contenteditable="true"]',
-      'textarea:not([readonly]):not([disabled])',
-      'input[type="text"]:not([readonly]):not([disabled])',
+    // Priority 1: placeholder-based (catches Thumbtack "Type a message...", etc.)
+    const placeholderSelectors = [
+      'textarea[placeholder*="message" i]',
+      'textarea[placeholder*="reply" i]',
+      'textarea[placeholder*="write" i]',
+      '[contenteditable][data-placeholder*="message" i]',
+      '[contenteditable][aria-placeholder*="message" i]',
+      '[contenteditable][placeholder*="message" i]',
     ];
-
-    for (const sel of selectors) {
+    for (const sel of placeholderSelectors) {
       const els = document.querySelectorAll(sel);
       for (const el of els) {
         if (!isOurElement(el) && isVisible(el)) return el;
       }
     }
+
+    // Priority 2: role/site-specific
+    const roleSelectors = [
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"].Am.Al.editable',
+      '[contenteditable="true"][data-tab]',
+    ];
+    for (const sel of roleSelectors) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        if (!isOurElement(el) && isVisible(el)) return el;
+      }
+    }
+
+    // Priority 3: any visible textarea/input
+    for (const sel of ['textarea:not([readonly]):not([disabled])', 'input[type="text"]:not([readonly]):not([disabled])', '[contenteditable="true"]']) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        if (!isOurElement(el) && isVisible(el)) return el;
+      }
+    }
+
     return null;
   }
 
@@ -413,6 +445,7 @@
 
   function readConversation() {
     const strategies = [
+      readThumbtrack,
       readFacebookMessenger,
       readGmail,
       readWhatsAppWeb,
@@ -427,6 +460,84 @@
         if (result && result.length >= 2) return result;
       } catch (_) {}
     }
+    return [];
+  }
+
+  function readThumbtrack() {
+    // Thumbtack uses a split-pane layout: left = thread list, right = active conversation.
+    // Messages are styled as left-aligned (customer) vs right-aligned (you).
+    // We try several selector patterns since class names may be hashed.
+
+    // Strategy A: look for explicit sent/received class patterns
+    const sentSelectors   = ['[class*="sent"]', '[class*="outgoing"]', '[class*="outbound"]', '[class*="right"]'];
+    const recvSelectors   = ['[class*="received"]', '[class*="incoming"]', '[class*="inbound"]', '[class*="left"]'];
+
+    for (let i = 0; i < sentSelectors.length; i++) {
+      const sent = [...document.querySelectorAll(sentSelectors[i])].filter(notOurs).filter(el => el.textContent.trim().length > 0);
+      const recv = [...document.querySelectorAll(recvSelectors[i])].filter(notOurs).filter(el => el.textContent.trim().length > 0);
+      if (sent.length >= 1 && recv.length >= 1) {
+        // Merge and sort by DOM order
+        const all = [
+          ...sent.map(el => ({ el, sender: 'You' })),
+          ...recv.map(el => ({ el, sender: 'Them' })),
+        ].sort((a, b) => a.el.compareDocumentPosition(b.el) & 4 ? -1 : 1);
+        const result = all.map(({ el, sender }) => ({ sender, text: el.textContent.trim() }))
+                          .filter(m => m.text.length > 0 && m.text.length < 2000);
+        if (result.length >= 2) return result;
+      }
+    }
+
+    // Strategy B: look for a scrollable message container and read child elements,
+    // guessing direction by flex-end / margin-left CSS or text alignment.
+    const containerSelectors = [
+      '[class*="messageList"]', '[class*="MessageList"]',
+      '[class*="message-list"]', '[class*="thread"]',
+      '[class*="conversation"]', '[class*="chatArea"]',
+      '[class*="messages"]', '[class*="Messages"]',
+    ];
+    for (const cSel of containerSelectors) {
+      const container = document.querySelector(cSel);
+      if (!container || isOurElement(container)) continue;
+      const children = [...container.querySelectorAll('*')]
+        .filter(el => el.children.length === 0 && el.textContent.trim().length > 5 && !isOurElement(el));
+      if (children.length >= 2) {
+        return children.slice(-20).map((el, i) => {
+          const style = window.getComputedStyle(el.parentElement || el);
+          const isRight = style.textAlign === 'right' ||
+                          style.alignSelf === 'flex-end' ||
+                          style.marginLeft === 'auto';
+          return { sender: isRight ? 'You' : 'Them', text: el.textContent.trim() };
+        }).filter(m => m.text.length > 0);
+      }
+    }
+
+    // Strategy C: Thumbtack-specific — look for elements near a "Type a message" textarea
+    const inputEl = document.querySelector('textarea[placeholder*="message" i]');
+    if (inputEl) {
+      // Walk up to find the chat pane, then grab all leaf text nodes
+      let pane = inputEl.parentElement;
+      for (let d = 0; d < 8; d++) {
+        if (!pane) break;
+        const leaves = [...pane.querySelectorAll('*')]
+          .filter(el => el.children.length === 0 &&
+                        el.textContent.trim().length > 5 &&
+                        el.textContent.trim().length < 1000 &&
+                        !isOurElement(el) &&
+                        el !== inputEl);
+        if (leaves.length >= 4) {
+          // Use position — elements on the right half of the screen are likely "You"
+          const paneRect = pane.getBoundingClientRect();
+          const midX = paneRect.left + paneRect.width / 2;
+          return leaves.slice(-20).map(el => {
+            const rect = el.getBoundingClientRect();
+            const sender = rect.left > midX ? 'You' : 'Them';
+            return { sender, text: el.textContent.trim() };
+          }).filter(m => m.text.length > 0);
+        }
+        pane = pane.parentElement;
+      }
+    }
+
     return [];
   }
 

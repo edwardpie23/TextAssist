@@ -227,6 +227,46 @@
   background: #4f46e5;
 }
 
+/* ── User draft section ── */
+#ta-draft-section {
+  margin-bottom: 8px;
+}
+
+.ta-draft-label {
+  font-size: 11px;
+  color: #89b4fa;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ta-optional {
+  color: #6c7086;
+  font-weight: 400;
+}
+
+#ta-draft-input {
+  width: 100%;
+  background: #181825;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  line-height: 1.4;
+}
+
+#ta-draft-input:focus {
+  border-color: #89b4fa;
+}
+
+#ta-draft-input::placeholder {
+  color: #45475a;
+  font-style: italic;
+}
+
 /* ── Generate button ── */
 #ta-actions {
   margin-bottom: 8px;

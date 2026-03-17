@@ -10,13 +10,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function handleGenerateReplies({ conversation, styleProfile, apiKey, model }) {
+async function handleGenerateReplies({ conversation, styleProfile, apiKey, model, userDraft }) {
   if (!apiKey) {
     throw new Error('No API key set. Open the TextAssist popup to add your Groq API key.');
   }
 
   const systemPrompt = buildSystemPrompt(styleProfile);
-  const userPrompt = buildUserPrompt(conversation);
+  const userPrompt = buildUserPrompt(conversation, userDraft);
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -65,11 +65,15 @@ Rules:
   return baseInstructions;
 }
 
-function buildUserPrompt(conversation) {
+function buildUserPrompt(conversation, userDraft) {
   const lines = conversation
-    .slice(-12) // last 12 messages for context
+    .slice(-12)
     .map(m => `${m.sender}: ${m.text}`)
     .join('\n');
+
+  if (userDraft && userDraft.trim()) {
+    return `Conversation:\n${lines}\n\nThe user wants to say something like: "${userDraft.trim()}"\n\nGenerate 3 reply options that express that intent naturally, matching the conversation context.`;
+  }
 
   return `Conversation:\n${lines}\n\nGenerate 3 reply options for the last message above.`;
 }
