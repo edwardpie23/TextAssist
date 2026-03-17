@@ -282,7 +282,32 @@
   }
 
   function findInputTarget() {
-    // Priority 1: message-like placeholder text
+    // Collect all candidate elements including those inside shadow roots
+    function* walkForInputs(root) {
+      for (const el of root.querySelectorAll('textarea, [contenteditable="true"]')) {
+        yield el;
+      }
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) yield* walkForInputs(el.shadowRoot);
+      }
+    }
+
+    const candidates = [...walkForInputs(document)];
+    console.log('[TA] findInputTarget: candidates=', candidates.length);
+
+    // Priority 1: Sendbird message input (most specific)
+    for (const el of candidates) {
+      const cls = (el.className || '').toString();
+      const ph = (el.placeholder || el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
+      if (cls.includes('sendbird-message-input') || cls.includes('message-input')) {
+        if (!isOurElement(el) && isVisible(el)) return el;
+      }
+      if (ph.includes('message') || ph.includes('reply') || ph.includes('type')) {
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+      }
+    }
+
+    // Priority 2: message-like placeholder text selectors
     const messagePlaceholders = [
       'textarea[placeholder*="message" i]',
       'textarea[placeholder*="reply" i]',
@@ -298,21 +323,25 @@
       }
     }
 
-    // Priority 2: role-based contenteditable
-    for (const sel of ['[contenteditable="true"][role="textbox"]']) {
-      for (const el of document.querySelectorAll(sel)) {
+    // Priority 3: role-based contenteditable
+    for (const el of candidates) {
+      if (el.getAttribute('role') === 'textbox' && el.isContentEditable) {
         if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    // Priority 3: any visible textarea that is not a search box
-    for (const el of document.querySelectorAll('textarea:not([readonly]):not([disabled])')) {
-      if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+    // Priority 4: any visible textarea
+    for (const el of candidates) {
+      if (el.tagName === 'TEXTAREA' && !el.readOnly && !el.disabled) {
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+      }
     }
 
-    // Priority 4: any contenteditable
-    for (const el of document.querySelectorAll('[contenteditable="true"]')) {
-      if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+    // Priority 5: any contenteditable
+    for (const el of candidates) {
+      if (el.isContentEditable) {
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
+      }
     }
 
     return null;
