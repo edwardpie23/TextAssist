@@ -387,12 +387,21 @@
         }
 
         // Check scrollable siblings at this level — message lists are scrollable,
-        // nav bars / input wrappers are not
+        // nav bars / input wrappers are not.
+        // Positional guards prevent picking up the thread-list panel that sits
+        // to the LEFT of the active chat area.
+        const inputRect = inputEl.getBoundingClientRect();
         const parent = node.parentElement;
         if (parent) {
           for (const sibling of parent.children) {
             if (sibling === node || isOurElement(sibling)) continue;
             if (!isVisible(sibling) || !isScrollable(sibling)) continue;
+            const sr = sibling.getBoundingClientRect();
+            // Skip siblings whose right edge ends well to the LEFT of the input —
+            // those are thread-list / nav panels, not the active message list.
+            if (sr.right < inputRect.left - 80) continue;
+            // Skip siblings that start BELOW the input (can't be the message list above it).
+            if (sr.top > inputRect.top + 20) continue;
             const score = countMessageChildren(sibling, inputEl);
             if (score >= 2) {
               const msgs = extractMessages(sibling, inputEl);
@@ -424,6 +433,7 @@
   function scanPageForConversation(inputEl) {
     let best = null;
     let bestScore = 2;
+    const inputRect = inputEl ? inputEl.getBoundingClientRect() : null;
 
     const candidates = document.querySelectorAll('div, ul, ol, section, main, article');
     for (const el of candidates) {
@@ -431,6 +441,12 @@
       const childCount = el.children.length;
       if (childCount < 3 || childCount > 200) continue;
       if (!isVisible(el)) continue;
+      // When we have an input anchor, skip containers that sit clearly to its left
+      if (inputRect) {
+        const r = el.getBoundingClientRect();
+        if (r.right < inputRect.left - 80) continue;
+        if (r.top > inputRect.top + 20) continue;
+      }
       const score = countMessageChildren(el, inputEl);
       if (score > bestScore) {
         bestScore = score;
