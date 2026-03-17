@@ -25,7 +25,7 @@ async function handleGenerateReplies({ conversation, styleProfile, apiKey, model
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: model || 'grok-3-mini',
+      model: model || 'grok-2-1212',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
