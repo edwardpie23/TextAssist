@@ -390,6 +390,7 @@
     const inputRect = inputEl.getBoundingClientRect();
     const inputCenterX = (inputRect.left + inputRect.right) / 2;
     const paneLeft = getChatPaneLeft(inputEl);
+    console.log('[TA] readConversation: inputRect=', Math.round(inputRect.left), Math.round(inputRect.top), 'paneLeft=', Math.round(paneLeft));
 
     const seen = new Set();
     const found = [];
@@ -404,38 +405,45 @@
     }
 
     const SKIP_TAGS = new Set(['SCRIPT','STYLE','HEAD','META','LINK','SVG','PATH','G','DEFS','NOSCRIPT','IFRAME','CANVAS','VIDEO','AUDIO','IMG','INPUT','TEXTAREA','SELECT','BUTTON','OPTION']);
+    let dbgTotal = 0, dbgMsg = 0, dbgRect = 0, dbgAbove = 0, dbgHdr = 0, dbgX = 0;
     for (const el of walkAll(document)) {
       if (SKIP_TAGS.has(el.tagName)) continue;
       if (isOurElement(el)) continue;
       if (el === inputEl || el.contains(inputEl) || inputEl.contains(el)) continue;
+      dbgTotal++;
 
       const text = el.textContent.trim();
       if (!looksLikeMessage(text)) continue;
       if (seen.has(text)) continue;
+      dbgMsg++;
 
       // Skip wrapper elements: if a direct child carries the exact same text,
       // this node is just a container — the child will be picked up instead.
       if ([...el.children].some(c => c.textContent.trim() === text)) continue;
 
       const r = el.getBoundingClientRect();
-      if (r.width < 20 || r.height < 4) continue;
+      if (r.width < 20 || r.height < 4) { dbgRect++; continue; }
 
       // Must be above the input
-      if (r.bottom > inputRect.top + 10) continue;
+      if (r.bottom > inputRect.top + 10) { dbgAbove++; continue; }
 
       // Skip page-header elements pinned near the top of the viewport
-      if (r.top < 50) continue;
+      if (r.top < 50) { dbgHdr++; continue; }
 
       // The element's center X must fall within the chat pane.
       // paneLeft is the left edge of the panel that contains the textarea;
       // sidebar / thread-list elements are further left and get excluded.
       const elCenterX = r.left + r.width / 2;
-      if (elCenterX < paneLeft) continue;
-      if (elCenterX > inputRect.right + 80) continue;
+      if (elCenterX < paneLeft || elCenterX > inputRect.right + 80) {
+        dbgX++;
+        console.log('[TA] X-filtered:', el.tagName, el.className.substring(0,40), 'cx='+Math.round(elCenterX), 'text='+text.substring(0,40));
+        continue;
+      }
 
       seen.add(text);
       found.push({ el, text, top: r.top, bottom: r.bottom, height: r.height });
     }
+    console.log('[TA] scan done: total='+dbgTotal+' passedMsg='+dbgMsg+' rect='+dbgRect+' below='+dbgAbove+' hdr='+dbgHdr+' x='+dbgX+' found='+found.length);
 
     if (found.length === 0) return [];
 
