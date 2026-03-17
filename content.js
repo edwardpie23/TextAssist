@@ -461,6 +461,7 @@
     }
 
     // ── Fallback: position-based scan ────────────────────────────────────────
+    const inputEl = findInputTarget();
     console.log('[TA] findInputTarget =', inputEl ? inputEl.tagName + ' ' + (inputEl.className||'').substring(0,40) : 'NULL');
     if (!inputEl) return [];
 
