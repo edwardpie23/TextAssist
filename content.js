@@ -4,21 +4,27 @@
 (function () {
   'use strict';
 
-  // Prevent double-injection
   if (window.__textAssistLoaded) return;
   window.__textAssistLoaded = true;
 
-  // ─── Panel State ──────────────────────────────────────────────────────────
+  // ─── State ────────────────────────────────────────────────────────────────
 
   let panel = null;
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
-  let lastFocusedInput = null;
 
-  // Track last focused input/textarea/contenteditable
+  // The last input/textarea/contenteditable the user touched — updated on focusin
+  let lastFocusedInput = null;
+  // Locked at Generate-click time so Insert always uses the same target
+  let lockedInsertTarget = null;
+  // True when waiting for the user to click a target
+  let pickingTarget = false;
+
+  // Never track focus inside our own panel
   document.addEventListener('focusin', (e) => {
     const el = e.target;
+    if (isOurElement(el)) return;
     if (
       el.tagName === 'TEXTAREA' ||
       el.tagName === 'INPUT' ||
@@ -28,7 +34,13 @@
     }
   }, true);
 
-  // ─── Panel Creation ───────────────────────────────────────────────────────
+  function isOurElement(el) {
+    const p = document.getElementById('textassist-panel');
+    const t = document.getElementById('textassist-trigger');
+    return (p && p.contains(el)) || (t && t === el);
+  }
+
+  // ─── Panel HTML ───────────────────────────────────────────────────────────
 
   function createPanel() {
     if (panel) return;
@@ -44,11 +56,31 @@
         </div>
       </div>
       <div id="ta-body">
+
+        <!-- Target indicator -->
+        <div id="ta-target-row">
+          <span id="ta-target-label">Insert into: <strong id="ta-target-name">not set</strong></span>
+          <button id="ta-pick-target">Pick ✎</button>
+        </div>
+
+        <!-- Status -->
         <div id="ta-status">Click <strong>Generate Replies</strong> to get AI suggestions.</div>
+
+        <!-- Replies -->
         <div id="ta-replies"></div>
+
+        <!-- Manual conversation paste (shown when auto-read fails) -->
+        <div id="ta-manual-section" style="display:none">
+          <div class="ta-manual-label">Paste the conversation here:</div>
+          <textarea id="ta-manual-input" rows="5" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
+        </div>
+
+        <!-- Actions -->
         <div id="ta-actions">
           <button id="ta-generate-btn">⚡ Generate Replies</button>
         </div>
+
+        <!-- Tone row -->
         <div id="ta-tone-row">
           <span class="ta-tone-label">Adjust tone:</span>
           <button class="ta-tone-btn" data-tone="shorter">Shorter</button>
@@ -64,36 +96,27 @@
     `;
 
     document.body.appendChild(panel);
-
-    // Position bottom-right
-    panel.style.bottom = '20px';
+    panel.style.bottom = '80px';
     panel.style.right = '20px';
 
     bindPanelEvents();
+    updateTargetLabel();
   }
 
   function bindPanelEvents() {
-    // Drag header
-    const header = panel.querySelector('#ta-header');
-    header.addEventListener('mousedown', startDrag);
-
-    // Close
-    panel.querySelector('#ta-close').addEventListener('click', () => {
-      panel.remove();
-      panel = null;
-    });
-
-    // Minimize / expand
+    panel.querySelector('#ta-header').addEventListener('mousedown', startDrag);
+    panel.querySelector('#ta-close').addEventListener('click', closePanel);
     panel.querySelector('#ta-minimize').addEventListener('click', minimizePanel);
     panel.querySelector('#ta-expand').addEventListener('click', expandPanel);
-
-    // Generate
     panel.querySelector('#ta-generate-btn').addEventListener('click', onGenerate);
-
-    // Tone buttons — regenerate with tone modifier
+    panel.querySelector('#ta-pick-target').addEventListener('click', startPickTarget);
     panel.querySelectorAll('.ta-tone-btn').forEach(btn => {
       btn.addEventListener('click', () => onGenerate(btn.dataset.tone));
     });
+  }
+
+  function closePanel() {
+    if (panel) { panel.remove(); panel = null; }
   }
 
   function minimizePanel() {
@@ -108,6 +131,79 @@
     panel.querySelector('#ta-header').style.display = 'flex';
     panel.querySelector('#ta-minimized-bar').style.display = 'none';
     panel.style.width = '';
+  }
+
+  // ─── Pick Target ──────────────────────────────────────────────────────────
+
+  function startPickTarget() {
+    pickingTarget = true;
+    setStatus('👆 Click the chat input box you want to type into…');
+    minimizePanel();
+
+    document.addEventListener('click', onPickTargetClick, { capture: true, once: true });
+    // Cancel on Escape
+    document.addEventListener('keydown', cancelPickTarget, { once: true });
+  }
+
+  function onPickTargetClick(e) {
+    if (isOurElement(e.target)) {
+      // They clicked our panel — cancel
+      pickingTarget = false;
+      expandPanel();
+      setStatus('Pick cancelled.');
+      return;
+    }
+
+    const el = e.target;
+    if (
+      el.tagName === 'TEXTAREA' ||
+      el.tagName === 'INPUT' ||
+      el.contentEditable === 'true'
+    ) {
+      lockedInsertTarget = el;
+      lastFocusedInput = el;
+      pickingTarget = false;
+      expandPanel();
+      updateTargetLabel();
+      setStatus('✅ Target set! Now click Generate Replies.');
+    } else {
+      pickingTarget = false;
+      expandPanel();
+      setStatus('⚠️ That doesn\'t look like a text box. Try clicking directly inside the message input.');
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function cancelPickTarget(e) {
+    if (e.key === 'Escape') {
+      pickingTarget = false;
+      expandPanel();
+      setStatus('Pick cancelled.');
+      document.removeEventListener('click', onPickTargetClick, { capture: true });
+    }
+  }
+
+  function updateTargetLabel() {
+    if (!panel) return;
+    const nameEl = panel.querySelector('#ta-target-name');
+    const target = lockedInsertTarget || lastFocusedInput;
+    if (!target) {
+      nameEl.textContent = 'not set — click Pick ✎';
+      nameEl.style.color = '#f38ba8';
+    } else {
+      nameEl.textContent = describeElement(target);
+      nameEl.style.color = '#a6e3a1';
+    }
+  }
+
+  function describeElement(el) {
+    if (!el) return 'unknown';
+    const tag = el.tagName.toLowerCase();
+    const ph = el.placeholder || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '';
+    if (ph) return `${tag} "${ph.slice(0, 30)}"`;
+    const cls = Array.from(el.classList).slice(0, 2).join('.');
+    return cls ? `${tag}.${cls}` : tag;
   }
 
   // ─── Drag ─────────────────────────────────────────────────────────────────
@@ -141,16 +237,33 @@
 
   async function onGenerate(toneModifier) {
     const tone = typeof toneModifier === 'string' ? toneModifier : null;
+
+    // Lock the insert target NOW — before anything else changes focus
+    lockedInsertTarget = lockedInsertTarget || lastFocusedInput || findInputTarget();
+    updateTargetLabel();
+
     setStatus('Reading conversation…');
     setReplies([]);
 
-    const conversation = readConversation();
+    // Try auto-reading first
+    let conversation = readConversation();
+
+    // If auto-read failed, check if user pasted manually
     if (!conversation.length) {
-      setStatus('⚠️ No conversation found on this page. Try focusing the chat area first.');
+      const manualText = panel.querySelector('#ta-manual-input')?.value?.trim();
+      if (manualText) {
+        conversation = parseManualText(manualText);
+      }
+    }
+
+    // Still nothing — show manual paste area and stop
+    if (!conversation.length) {
+      panel.querySelector('#ta-manual-section').style.display = 'block';
+      setStatus('⚠️ Could not auto-read this page\'s conversation. Paste the chat messages in the box below, then click Generate again.');
       return;
     }
 
-    setStatus('Generating replies…');
+    setStatus(`Generating replies based on ${conversation.length} messages…`);
     panel.querySelector('#ta-generate-btn').disabled = true;
 
     try {
@@ -162,7 +275,6 @@
         model: settings.model,
       };
 
-      // Append tone instruction to style profile if modifier was requested
       if (tone) {
         const toneMap = {
           shorter: 'Make the reply shorter and more concise.',
@@ -194,9 +306,17 @@
     }
   }
 
+  function parseManualText(text) {
+    // Split pasted text into lines and treat as alternating speakers
+    return text.split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .map((text, i) => ({ sender: i % 2 === 0 ? 'Them' : 'You', text }));
+  }
+
   function setStatus(text) {
-    const el = panel.querySelector('#ta-status');
-    el.innerHTML = text;
+    if (!panel) return;
+    panel.querySelector('#ta-status').innerHTML = text;
   }
 
   function setReplies(replies) {
@@ -222,15 +342,19 @@
   // ─── Text Insertion ───────────────────────────────────────────────────────
 
   function insertReply(text) {
-    const target = findInputTarget();
-    if (!target) {
-      alert('TextAssist: Could not find the chat input box. Click inside the message field first, then try again.');
+    const target = lockedInsertTarget || findInputTarget();
+
+    if (!target || !document.contains(target)) {
+      setStatus('⚠️ No target set. Click <strong>Pick ✎</strong> and then click the chat input box.');
       return;
     }
 
     if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') ||
-                           Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+      // Use native setter so React/Vue state picks it up
+      const proto = target.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
       if (nativeSetter && nativeSetter.set) {
         nativeSetter.set.call(target, text);
       } else {
@@ -241,45 +365,37 @@
       target.focus();
     } else if (target.contentEditable === 'true') {
       target.focus();
-      // Use execCommand for contenteditable (works in most chat apps)
+      // Clear existing content and insert new text
       document.execCommand('selectAll', false, null);
       document.execCommand('insertText', false, text);
-      // Fallback
-      if (!target.textContent.includes(text)) {
+      // Fallback if execCommand didn't work
+      if (!target.textContent.includes(text.slice(0, 20))) {
         target.textContent = text;
-        target.dispatchEvent(new InputEvent('input', { bubbles: true }));
+        target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       }
     }
 
-    setStatus(`✅ Inserted! Review and press Send when ready.`);
+    setStatus('✅ Inserted! Review and press Send when ready.');
   }
 
-  function findInputTarget() {
-    // Priority 1: last focused element
-    if (lastFocusedInput && document.contains(lastFocusedInput)) {
-      return lastFocusedInput;
-    }
+  // ─── Find Input (fallback, excludes our panel) ────────────────────────────
 
-    // Priority 2: site-specific selectors
-    const siteSelectors = [
-      // Facebook Messenger
+  function findInputTarget() {
+    const selectors = [
       '[contenteditable="true"][role="textbox"]',
-      // Gmail compose
       '[contenteditable="true"].Am.Al.editable',
-      // WhatsApp Web
       '[contenteditable="true"][data-tab]',
-      // Generic contenteditable
       '[contenteditable="true"]',
-      // Generic textarea/input
       'textarea:not([readonly]):not([disabled])',
       'input[type="text"]:not([readonly]):not([disabled])',
     ];
 
-    for (const sel of siteSelectors) {
-      const el = document.querySelector(sel);
-      if (el && isVisible(el)) return el;
+    for (const sel of selectors) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        if (!isOurElement(el) && isVisible(el)) return el;
+      }
     }
-
     return null;
   }
 
@@ -290,6 +406,11 @@
 
   // ─── Conversation Reader ──────────────────────────────────────────────────
 
+  // IMPORTANT: every reader must exclude our own panel elements.
+  function notOurs(el) {
+    return !isOurElement(el);
+  }
+
   function readConversation() {
     const strategies = [
       readFacebookMessenger,
@@ -297,31 +418,26 @@
       readWhatsAppWeb,
       readTuro,
       readGenericChat,
-      readGenericFallback,
     ];
+    // Note: NO generic fallback that reads all divs — that caused the panel-reading bug.
 
     for (const fn of strategies) {
       try {
         const result = fn();
-        if (result && result.length >= 1) return result;
+        if (result && result.length >= 2) return result;
       } catch (_) {}
     }
-
     return [];
   }
 
   function readFacebookMessenger() {
-    // Facebook Messenger message bubbles
     const rows = document.querySelectorAll('[data-testid="messenger-thread-view"] [class*="message"]');
-    if (!rows.length) return [];
-    return extractFromElements(rows, el => el.textContent.trim());
+    return extractFromElements([...rows].filter(notOurs), el => el.textContent.trim());
   }
 
   function readGmail() {
-    // Gmail thread view
     const messages = document.querySelectorAll('.h7, .gs, [data-message-id]');
-    if (!messages.length) return [];
-    return Array.from(messages).map((el, i) => {
+    return [...messages].filter(notOurs).map((el, i) => {
       const sender = el.querySelector('.gD')?.getAttribute('email') ||
                      el.querySelector('.go')?.textContent ||
                      (i % 2 === 0 ? 'Them' : 'You');
@@ -332,8 +448,7 @@
 
   function readWhatsAppWeb() {
     const rows = document.querySelectorAll('[class*="message-in"], [class*="message-out"]');
-    if (!rows.length) return [];
-    return Array.from(rows).map(el => {
+    return [...rows].filter(notOurs).map(el => {
       const isOut = el.className.includes('message-out');
       const text = el.querySelector('[class*="copyable-text"], span[dir]')?.textContent?.trim() || '';
       return { sender: isOut ? 'You' : 'Them', text };
@@ -341,14 +456,11 @@
   }
 
   function readTuro() {
-    // Turo chat — generic enough to be caught by fallback, but try specific first
     const rows = document.querySelectorAll('[class*="chat-message"], [class*="ChatMessage"], [class*="message-bubble"]');
-    if (!rows.length) return [];
-    return extractFromElements(rows, el => el.textContent.trim());
+    return extractFromElements([...rows].filter(notOurs), el => el.textContent.trim());
   }
 
   function readGenericChat() {
-    // Common chat patterns
     const selectors = [
       '[role="listitem"]',
       '[data-message]',
@@ -356,35 +468,23 @@
       '[class*="msg-row"]',
       '[class*="chat-row"]',
       '[class*="ConversationItem"]',
+      '[class*="thread"]',
     ];
     for (const sel of selectors) {
-      const els = document.querySelectorAll(sel);
-      if (els.length >= 2) return extractFromElements(els, el => el.textContent.trim());
+      const els = [...document.querySelectorAll(sel)].filter(notOurs);
+      if (els.length >= 2) {
+        const results = extractFromElements(els, el => el.textContent.trim());
+        if (results.length >= 2) return results;
+      }
     }
     return [];
   }
 
-  function readGenericFallback() {
-    // Last resort: grab all text content from the visible area that looks like chat
-    const candidates = Array.from(document.querySelectorAll('p, div, span'))
-      .filter(el => {
-        const t = el.textContent.trim();
-        return t.length > 5 && t.length < 1000 && el.children.length === 0;
-      })
-      .slice(-30); // last 30 text nodes
-
-    if (candidates.length < 3) return [];
-    return candidates.map((el, i) => ({
-      sender: i % 2 === 0 ? 'Them' : 'You',
-      text: el.textContent.trim(),
-    }));
-  }
-
   function extractFromElements(els, getText) {
-    return Array.from(els).map((el, i) => ({
+    return els.map((el, i) => ({
       sender: i % 2 === 0 ? 'Them' : 'You',
       text: getText(el),
-    })).filter(m => m.text.length > 0);
+    })).filter(m => m.text && m.text.length > 0 && m.text.length < 2000);
   }
 
   // ─── Settings ─────────────────────────────────────────────────────────────
@@ -395,24 +495,18 @@
     });
   }
 
-  // ─── Floating Trigger Button ───────────────────────────────────────────────
+  // ─── Trigger Button ───────────────────────────────────────────────────────
 
   function createTriggerButton() {
     if (document.getElementById('textassist-trigger')) return;
-
     const btn = document.createElement('button');
     btn.id = 'textassist-trigger';
     btn.title = 'TextAssist — Generate Reply';
     btn.innerHTML = '✦';
     document.body.appendChild(btn);
-
     btn.addEventListener('click', () => {
-      if (!panel) {
-        createPanel();
-      } else {
-        // Already open — just bring attention to generate button
-        expandPanel();
-      }
+      if (!panel) createPanel();
+      else expandPanel();
     });
   }
 
@@ -420,7 +514,6 @@
 
   createTriggerButton();
 
-  // Listen for messages from popup (e.g., "open panel")
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'OPEN_PANEL') {
       if (!panel) createPanel();

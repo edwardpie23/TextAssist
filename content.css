@@ -101,6 +101,76 @@
 #ta-body::-webkit-scrollbar-track { background: transparent; }
 #ta-body::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
 
+/* ── Target row ── */
+#ta-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 7px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+#ta-target-label {
+  font-size: 11px;
+  color: #6c7086;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#ta-target-name {
+  color: #a6e3a1;
+}
+
+#ta-pick-target {
+  background: #313244;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#ta-pick-target:hover {
+  background: #45475a;
+}
+
+/* ── Manual paste section ── */
+#ta-manual-section {
+  margin-bottom: 8px;
+}
+
+.ta-manual-label {
+  font-size: 11px;
+  color: #6c7086;
+  margin-bottom: 4px;
+}
+
+#ta-manual-input {
+  width: 100%;
+  background: #181825;
+  color: #cdd6f4;
+  border: 1px solid #313244;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+#ta-manual-input:focus {
+  border-color: #6366f1;
+}
+
 /* ── Status ── */
 #ta-status {
   font-size: 12px;
