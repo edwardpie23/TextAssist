@@ -1,4 +1,4 @@
-// Background service worker — handles Grok (xAI) API calls so the API key
+// Background service worker — handles Groq API calls so the API key
 // never touches page content scripts.
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -12,20 +12,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleGenerateReplies({ conversation, styleProfile, apiKey, model }) {
   if (!apiKey) {
-    throw new Error('No API key set. Open the TextAssist popup to add your Grok API key.');
+    throw new Error('No API key set. Open the TextAssist popup to add your Groq API key.');
   }
 
   const systemPrompt = buildSystemPrompt(styleProfile);
   const userPrompt = buildUserPrompt(conversation);
 
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: model || 'grok-2-1212',
+      model: model || 'llama-3.3-70b-versatile',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -37,7 +37,7 @@ async function handleGenerateReplies({ conversation, styleProfile, apiKey, model
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Grok API error ${response.status}`);
+    throw new Error(err.error?.message || `Groq API error ${response.status}`);
   }
 
   const data = await response.json();

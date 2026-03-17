@@ -16,12 +16,12 @@
     <main>
       <!-- API Key -->
       <section class="section">
-        <label for="api-key">Grok API Key</label>
+        <label for="api-key">Groq API Key</label>
         <div class="input-row">
           <input
             type="password"
             id="api-key"
-            placeholder="xai-..."
+            placeholder="gsk_..."
             autocomplete="off"
             spellcheck="false"
           />
@@ -29,8 +29,8 @@
         </div>
         <p class="hint">
           Your key is stored locally and never leaves your browser except to
-          call xAI (Grok) directly.
-          <a href="https://console.x.ai/" target="_blank">Get a key at console.x.ai ↗</a>
+          call Groq directly.
+          <a href="https://console.groq.com/keys" target="_blank">Get a key at console.groq.com ↗</a>
         </p>
       </section>
 
@@ -38,10 +38,10 @@
       <section class="section">
         <label for="model-select">Model</label>
         <select id="model-select">
-          <option value="grok-3-mini">Grok 3 Mini (fast &amp; cheap)</option>
-          <option value="grok-3">Grok 3 (best quality)</option>
-          <option value="grok-2-1212">Grok 2 (stable)</option>
-          <option value="grok-beta">Grok Beta (fallback)</option>
+          <option value="llama-3.3-70b-versatile">Llama 3.3 70B (best quality)</option>
+          <option value="llama-3.1-8b-instant">Llama 3.1 8B (fastest)</option>
+          <option value="mixtral-8x7b-32768">Mixtral 8x7B (balanced)</option>
+          <option value="gemma2-9b-it">Gemma 2 9B (lightweight)</option>
         </select>
       </section>
 
