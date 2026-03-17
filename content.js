@@ -341,8 +341,11 @@
 
   // Returns true if a string looks like a real chat message (not code, not UI labels)
   function looksLikeMessage(text) {
-    if (!text || text.length < 3 || text.length > 2000) return false;
+    if (!text || text.length < 10 || text.length > 2000) return false;
     if (/^\d{1,2}:\d{2}\s*(am|pm)?$/i.test(text)) return false; // pure timestamp
+    // Must have at least 2 words — filters out single-word nav labels like "Pipeline", "Payroll"
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+    if (words.length < 2) return false;
     // Reject code-like strings
     const codeSignals = ['{', '}', '=>', 'function(', 'const ', 'var ', 'let ', 'import ', 'export ', '();', '===', '!==', '/*', '*/', 'getElementById', 'querySelector'];
     if (codeSignals.filter(s => text.includes(s)).length >= 2) return false;
@@ -355,40 +358,56 @@
   //
   // Algorithm:
   //   1. Anchor on the message input (textarea/contenteditable).
-  //   2. Walk UP the DOM from that input looking for the container whose
-  //      DIRECT CHILDREN score highest as a list of chat messages.
-  //   3. Extract each child as a message and determine sender via:
-  //        a. Class names containing sent/received/outgoing/incoming keywords
-  //        b. CSS: align-self:flex-end or margin-left:auto  →  "You"
-  //        c. X position relative to container midpoint
-  //   4. Fall back to a page-wide scan if no input anchor found.
+  //   2. Walk UP from the input. At each level check:
+  //        a. Does this node itself have message-like direct children? → use it
+  //        b. Do any SCROLLABLE SIBLINGS of this node have message-like children?
+  //           (The message list is often a scrollable sibling of the input wrapper)
+  //   3. Stop at the first match — avoids walking too high and picking up
+  //      sidebar/nav text that would score even higher.
+  //   4. Determine sender per message via class names → CSS → X position.
+  //   5. Fall back to a page-wide scan if the anchor search fails.
+
+  function isScrollable(el) {
+    return el.scrollHeight > el.clientHeight + 30 || el.scrollHeight > el.offsetHeight + 30;
+  }
 
   function readConversation() {
     const inputEl = findInputTarget();
 
-    // Walk up from input to find the best message-list container
-    let bestContainer = null;
-    let bestScore = 2; // minimum 3 message children required
+    if (inputEl) {
+      let node = inputEl.parentElement;
+      for (let d = 0; d < 15; d++) {
+        if (!node || node === document.body) break;
 
-    let node = inputEl ? inputEl.parentElement : null;
-    for (let d = 0; d < 20; d++) {
-      if (!node || node === document.body) break;
-      const score = countMessageChildren(node, inputEl);
-      if (score > bestScore) {
-        bestScore = score;
-        bestContainer = node;
+        // Check this node's own direct children
+        const selfScore = countMessageChildren(node, inputEl);
+        if (selfScore >= 2) {
+          const msgs = extractMessages(node, inputEl);
+          if (msgs.length >= 2) return msgs;
+        }
+
+        // Check scrollable siblings at this level — message lists are scrollable,
+        // nav bars / input wrappers are not
+        const parent = node.parentElement;
+        if (parent) {
+          for (const sibling of parent.children) {
+            if (sibling === node || isOurElement(sibling)) continue;
+            if (!isVisible(sibling) || !isScrollable(sibling)) continue;
+            const score = countMessageChildren(sibling, inputEl);
+            if (score >= 2) {
+              const msgs = extractMessages(sibling, inputEl);
+              if (msgs.length >= 2) return msgs;
+            }
+          }
+        }
+
+        node = node.parentElement;
       }
-      node = node.parentElement;
     }
 
-    // If walking up didn't find it, do a page-wide scan
-    if (!bestContainer) {
-      bestContainer = scanPageForConversation(inputEl);
-    }
-
-    if (!bestContainer) return [];
-
-    return extractMessages(bestContainer, inputEl);
+    // Fallback: page-wide scan
+    const container = scanPageForConversation(inputEl);
+    return container ? extractMessages(container, inputEl) : [];
   }
 
   // Count how many direct children of `container` look like chat message bubbles
