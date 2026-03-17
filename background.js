@@ -72,7 +72,7 @@ function buildUserPrompt(conversation, userDraft) {
     .join('\n');
 
   if (userDraft && userDraft.trim()) {
-    return `Conversation:\n${lines}\n\nThe user wants to say something like: "${userDraft.trim()}"\n\nGenerate 3 reply options that express that intent naturally, matching the conversation context.`;
+    return `Conversation:\n${lines}\n\nInstruction: ${userDraft.trim()}\n\nUsing the conversation above for context, follow the instruction to generate 3 reply options. For example, if the instruction says "confirm the job and provide pricing", confirm the specific job discussed in the conversation and suggest realistic pricing for it.`;
   }
 
   return `Conversation:\n${lines}\n\nGenerate 3 reply options for the last message above.`;

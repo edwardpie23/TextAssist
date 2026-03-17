@@ -59,10 +59,10 @@
           <textarea id="ta-manual-input" rows="5" placeholder="Paste the chat messages here, then click Generate Replies…"></textarea>
         </div>
 
-        <!-- User draft / intent -->
+        <!-- User instructions -->
         <div id="ta-draft-section">
-          <div class="ta-draft-label">Your draft <span class="ta-optional">(optional)</span></div>
-          <textarea id="ta-draft-input" rows="2" placeholder="e.g. I can't do that job, ask for more details, tell them the price is $200…"></textarea>
+          <div class="ta-draft-label">Instructions <span class="ta-optional">(optional)</span></div>
+          <textarea id="ta-draft-input" rows="2" placeholder="e.g. Confirm the job and provide pricing, ask for more details, decline politely…"></textarea>
         </div>
 
         <!-- Actions -->
@@ -156,6 +156,7 @@
   async function onGenerate(toneModifier) {
     const tone = typeof toneModifier === 'string' ? toneModifier : null;
 
+    console.log('[TA] Generate clicked');
     // Re-detect insert target every time in case focus changed
     lockedInsertTarget = lockedInsertTarget || findInputTarget();
 
@@ -384,7 +385,9 @@
   }
 
   function readConversation() {
+    console.log('[TA] readConversation called');
     const inputEl = findInputTarget();
+    console.log('[TA] findInputTarget =', inputEl ? inputEl.tagName + ' ' + (inputEl.className||'').substring(0,40) : 'NULL');
     if (!inputEl) return [];
 
     const inputRect = inputEl.getBoundingClientRect();
