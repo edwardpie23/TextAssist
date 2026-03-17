@@ -356,125 +356,72 @@
 
   // ─── Conversation Reader ──────────────────────────────────────────────────
   //
-  // Algorithm:
-  //   1. Anchor on the message input (textarea/contenteditable).
-  //   2. Walk UP from the input. At each level check:
-  //        a. Does this node itself have message-like direct children? → use it
-  //        b. Do any SCROLLABLE SIBLINGS of this node have message-like children?
-  //           (The message list is often a scrollable sibling of the input wrapper)
-  //   3. Stop at the first match — avoids walking too high and picking up
-  //      sidebar/nav text that would score even higher.
-  //   4. Determine sender per message via class names → CSS → X position.
-  //   5. Fall back to a page-wide scan if the anchor search fails.
-
-  function isScrollable(el) {
-    return el.scrollHeight > el.clientHeight + 30 || el.scrollHeight > el.offsetHeight + 30;
-  }
+  // Position-based approach: forget DOM structure entirely.
+  // Find every visible text element whose CENTER X falls inside the chat
+  // column (same horizontal zone as the textarea) and is above the textarea.
+  // Sort by vertical position → that IS the conversation, top to bottom.
+  //
+  // This is immune to sidebar / thread-list bleed because those panels
+  // live to the LEFT — their elements' center X is < inputRect.left.
 
   function readConversation() {
     const inputEl = findInputTarget();
+    if (!inputEl) return [];
 
-    if (inputEl) {
-      let node = inputEl.parentElement;
-      for (let d = 0; d < 15; d++) {
-        if (!node || node === document.body) break;
+    const inputRect = inputEl.getBoundingClientRect();
+    const inputCenterX = (inputRect.left + inputRect.right) / 2;
 
-        // Check this node's own direct children
-        const selfScore = countMessageChildren(node, inputEl);
-        if (selfScore >= 2) {
-          const msgs = extractMessages(node, inputEl);
-          if (msgs.length >= 2) return msgs;
-        }
+    const seen = new Set();
+    const found = [];
 
-        // Check scrollable siblings at this level — message lists are scrollable,
-        // nav bars / input wrappers are not.
-        // Positional guards prevent picking up the thread-list panel that sits
-        // to the LEFT of the active chat area.
-        const inputRect = inputEl.getBoundingClientRect();
-        const parent = node.parentElement;
-        if (parent) {
-          for (const sibling of parent.children) {
-            if (sibling === node || isOurElement(sibling)) continue;
-            if (!isVisible(sibling) || !isScrollable(sibling)) continue;
-            const sr = sibling.getBoundingClientRect();
-            // Skip siblings whose right edge ends well to the LEFT of the input —
-            // those are thread-list / nav panels, not the active message list.
-            if (sr.right < inputRect.left - 80) continue;
-            // Skip siblings that start BELOW the input (can't be the message list above it).
-            if (sr.top > inputRect.top + 20) continue;
-            const score = countMessageChildren(sibling, inputEl);
-            if (score >= 2) {
-              const msgs = extractMessages(sibling, inputEl);
-              if (msgs.length >= 2) return msgs;
-            }
-          }
-        }
-
-        node = node.parentElement;
-      }
-    }
-
-    // Fallback: page-wide scan
-    const container = scanPageForConversation(inputEl);
-    return container ? extractMessages(container, inputEl) : [];
-  }
-
-  // Count how many direct children of `container` look like chat message bubbles
-  function countMessageChildren(container, inputEl) {
-    return [...container.children].filter(el => {
-      if (isOurElement(el)) return false;
-      if (inputEl && (el === inputEl || el.contains(inputEl))) return false;
-      if (!isReallyVisible(el)) return false;
-      return looksLikeMessage(el.textContent.trim());
-    }).length;
-  }
-
-  // Scan entire page for the div whose direct children best form a conversation
-  function scanPageForConversation(inputEl) {
-    let best = null;
-    let bestScore = 2;
-    const inputRect = inputEl ? inputEl.getBoundingClientRect() : null;
-
-    const candidates = document.querySelectorAll('div, ul, ol, section, main, article');
-    for (const el of candidates) {
+    for (const el of document.querySelectorAll('div, p, span, li, td, blockquote, article')) {
       if (isOurElement(el)) continue;
-      const childCount = el.children.length;
-      if (childCount < 3 || childCount > 200) continue;
-      if (!isVisible(el)) continue;
-      // When we have an input anchor, skip containers that sit clearly to its left
-      if (inputRect) {
-        const r = el.getBoundingClientRect();
-        if (r.right < inputRect.left - 80) continue;
-        if (r.top > inputRect.top + 20) continue;
-      }
-      const score = countMessageChildren(el, inputEl);
-      if (score > bestScore) {
-        bestScore = score;
-        best = el;
-      }
-    }
-
-    return best;
-  }
-
-  // Extract message objects from a container's direct children
-  function extractMessages(container, inputEl) {
-    const rect = container.getBoundingClientRect();
-    const midX = rect.left + rect.width / 2;
-
-    const messages = [];
-    for (const el of container.children) {
-      if (isOurElement(el)) continue;
-      if (inputEl && (el === inputEl || el.contains(inputEl))) continue;
-      if (!isReallyVisible(el)) continue;
+      if (el === inputEl || el.contains(inputEl) || inputEl.contains(el)) continue;
 
       const text = el.textContent.trim();
       if (!looksLikeMessage(text)) continue;
+      if (seen.has(text)) continue;
 
-      messages.push({ sender: determineSender(el, midX), text });
+      // Skip wrapper elements: if a direct child carries the exact same text,
+      // this node is just a container — the child will be picked up instead.
+      if ([...el.children].some(c => c.textContent.trim() === text)) continue;
+
+      const r = el.getBoundingClientRect();
+      if (r.width < 20 || r.height < 4) continue;
+
+      // Must be above the input
+      if (r.bottom > inputRect.top + 10) continue;
+
+      // The element's center X must sit inside the chat column.
+      // Thread-list items and sidebar labels are to the LEFT, so their
+      // center X will be less than the input's left edge.
+      const elCenterX = r.left + r.width / 2;
+      if (elCenterX < inputRect.left) continue;
+      if (elCenterX > inputRect.right + 80) continue;
+
+      seen.add(text);
+      found.push({ el, text, top: r.top, bottom: r.bottom, height: r.height });
     }
 
-    return messages;
+    if (found.length === 0) return [];
+
+    // Sort top-to-bottom = chronological
+    found.sort((a, b) => a.top - b.top);
+
+    // Remove vertical duplicates (in case a wrapper snuck through)
+    const messages = [];
+    for (const m of found) {
+      const overlaps = messages.some(d => {
+        const overlapPx = Math.min(m.bottom, d.bottom) - Math.max(m.top, d.top);
+        return overlapPx > Math.min(m.height, d.height) * 0.5;
+      });
+      if (!overlaps) messages.push(m);
+    }
+
+    return messages.map(({ el, text }) => ({
+      sender: determineSender(el, inputCenterX),
+      text,
+    }));
   }
 
   // Determine whether a message element was sent by "You" or "Them"
