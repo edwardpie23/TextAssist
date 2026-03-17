@@ -394,7 +394,9 @@
     const seen = new Set();
     const found = [];
 
-    for (const el of document.querySelectorAll('div, p, span, li, td, blockquote, article')) {
+    const SKIP_TAGS = new Set(['SCRIPT','STYLE','HEAD','META','LINK','SVG','PATH','G','DEFS','NOSCRIPT','IFRAME','CANVAS','VIDEO','AUDIO','IMG','INPUT','TEXTAREA','SELECT','BUTTON','OPTION']);
+    for (const el of document.querySelectorAll('*')) {
+      if (SKIP_TAGS.has(el.tagName)) continue;
       if (isOurElement(el)) continue;
       if (el === inputEl || el.contains(inputEl) || inputEl.contains(el)) continue;
 
