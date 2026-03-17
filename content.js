@@ -231,9 +231,15 @@
       card.innerHTML = `
         <div class="ta-reply-label">Option ${i + 1}</div>
         <div class="ta-reply-text">${escapeHtml(text)}</div>
-        <button class="ta-insert-btn">Insert ↵</button>
+        <button class="ta-insert-btn">Copy</button>
       `;
-      card.querySelector('.ta-insert-btn').addEventListener('click', () => insertReply(text));
+      card.querySelector('.ta-insert-btn').addEventListener('click', (e) => {
+        navigator.clipboard.writeText(text).then(() => {
+          const btn = e.currentTarget;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        }).catch(() => insertReply(text)); // fallback to insert if clipboard denied
+      });
       container.appendChild(card);
     });
   }
@@ -424,7 +430,37 @@
 
   function readConversation() {
     console.log('[TA] readConversation called');
-    const inputEl = findInputTarget();
+
+    // ── Fast path: Housecall Pro / Sendbird direct selector ──────────────────
+    // Messages live in [data-message-bubble="true"] > … > p elements.
+    // Bubbles with class "mine" are sent by the user; others are from the customer.
+    const bubbles = [...document.querySelectorAll('[data-message-bubble="true"]')];
+    if (bubbles.length > 0) {
+      const msgs = [];
+      for (const bubble of bubbles) {
+        const text = [...bubble.querySelectorAll('p')]
+          .map(p => p.textContent.trim())
+          .filter(t => t.length > 0)
+          .join(' ');
+        if (!text) continue;
+        // Walk up to find the scroll-ref container which has data-sb-created-at for ordering
+        const isMine = bubble.classList.contains('mine') ||
+          !!bubble.closest('.mine') ||
+          bubble.querySelector('.mine') !== null;
+        const wrapper = bubble.closest('[data-sb-created-at]') || bubble.closest('[data-sb-message-id]');
+        const ts = wrapper ? parseInt(wrapper.getAttribute('data-sb-created-at') || '0', 10) : 0;
+        const r = bubble.getBoundingClientRect();
+        msgs.push({ sender: isMine ? 'You' : 'Them', text, ts, top: r.top });
+      }
+      if (msgs.length > 0) {
+        // Sort by timestamp, fall back to vertical position
+        msgs.sort((a, b) => (a.ts || a.top) - (b.ts || b.top));
+        console.log('[TA] HCP direct read:', msgs.length, 'messages');
+        return msgs;
+      }
+    }
+
+    // ── Fallback: position-based scan ────────────────────────────────────────
     console.log('[TA] findInputTarget =', inputEl ? inputEl.tagName + ' ' + (inputEl.className||'').substring(0,40) : 'NULL');
     if (!inputEl) return [];
 
