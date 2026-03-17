@@ -7,6 +7,25 @@
   if (window.__textAssistLoaded) return;
   window.__textAssistLoaded = true;
 
+  // If we're running inside an iframe, only proceed when there are native
+  // inputs here (i.e., this IS the chat iframe). This prevents the top-level
+  // frame from showing a duplicate/broken panel when the real chat lives in a
+  // cross-origin child frame (e.g. messages.housecallpro.com inside pro.housecallpro.com).
+  const inIframe = window !== window.top;
+  if (!inIframe) {
+    // Top frame: skip if any child iframe looks like a Sendbird/messaging frame
+    // (detected by looking for iframes whose src contains known messaging domains).
+    const messagingIframes = [...document.querySelectorAll('iframe')].filter(f => {
+      const src = (f.src || f.getAttribute('src') || '').toLowerCase();
+      return src.includes('messages.') || src.includes('sendbird') || src.includes('chat.');
+    });
+    if (messagingIframes.length > 0) return; // let the iframe instance handle it
+  } else {
+    // In an iframe: only proceed if there's at least one native non-search input
+    const nativeInputs = document.querySelectorAll('textarea, [contenteditable]:not([contenteditable="false"])');
+    if (nativeInputs.length === 0) return;
+  }
+
   // ─── State ────────────────────────────────────────────────────────────────
 
   let panel = null;
