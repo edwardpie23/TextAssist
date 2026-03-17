@@ -346,6 +346,10 @@
     // Must have at least 2 words — filters out single-word nav labels like "Pipeline", "Payroll"
     const words = text.trim().split(/\s+/).filter(w => w.length > 0);
     if (words.length < 2) return false;
+    // Reject concatenated nav text like "HomeInbox99+ScheduleCustomersMy moneyPayroll..."
+    // Real sentences have roughly 1 space per 6–8 chars; nav dumps have almost none.
+    const spaceCount = (text.match(/ /g) || []).length;
+    if (text.length > 25 && spaceCount / text.length < 0.04) return false;
     // Reject code-like strings
     const codeSignals = ['{', '}', '=>', 'function(', 'const ', 'var ', 'let ', 'import ', 'export ', '();', '===', '!==', '/*', '*/', 'getElementById', 'querySelector'];
     if (codeSignals.filter(s => text.includes(s)).length >= 2) return false;
@@ -358,11 +362,26 @@
   //
   // Position-based approach: forget DOM structure entirely.
   // Find every visible text element whose CENTER X falls inside the chat
-  // column (same horizontal zone as the textarea) and is above the textarea.
-  // Sort by vertical position → that IS the conversation, top to bottom.
+  // pane (bounded by the pane's left edge and the textarea's right edge)
+  // and is above the textarea. Sort by vertical position → the conversation.
   //
-  // This is immune to sidebar / thread-list bleed because those panels
-  // live to the LEFT — their elements' center X is < inputRect.left.
+  // Key insight: the textarea is narrower than the chat pane — messages
+  // span the full pane width, so we walk UP from the textarea to find the
+  // pane's actual left edge rather than using inputRect.left directly.
+
+  // Walk up from the input to find the chat pane's left boundary.
+  // The pane is the first ancestor that extends >150px further left than the input.
+  function getChatPaneLeft(inputEl) {
+    const inputLeft = inputEl.getBoundingClientRect().left;
+    let node = inputEl.parentElement;
+    for (let i = 0; i < 15; i++) {
+      if (!node || node === document.body) break;
+      const r = node.getBoundingClientRect();
+      if (inputLeft - r.left > 150) return r.left;
+      node = node.parentElement;
+    }
+    return inputLeft - 500;
+  }
 
   function readConversation() {
     const inputEl = findInputTarget();
@@ -370,6 +389,7 @@
 
     const inputRect = inputEl.getBoundingClientRect();
     const inputCenterX = (inputRect.left + inputRect.right) / 2;
+    const paneLeft = getChatPaneLeft(inputEl);
 
     const seen = new Set();
     const found = [];
@@ -392,11 +412,14 @@
       // Must be above the input
       if (r.bottom > inputRect.top + 10) continue;
 
-      // The element's center X must sit inside the chat column.
-      // Thread-list items and sidebar labels are to the LEFT, so their
-      // center X will be less than the input's left edge.
+      // Skip page-header elements pinned near the top of the viewport
+      if (r.top < 50) continue;
+
+      // The element's center X must fall within the chat pane.
+      // paneLeft is the left edge of the panel that contains the textarea;
+      // sidebar / thread-list elements are further left and get excluded.
       const elCenterX = r.left + r.width / 2;
-      if (elCenterX < inputRect.left) continue;
+      if (elCenterX < paneLeft) continue;
       if (elCenterX > inputRect.right + 80) continue;
 
       seen.add(text);
