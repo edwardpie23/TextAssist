@@ -41,6 +41,7 @@
       <div id="ta-header">
         <span id="ta-logo">✦ TextAssist</span>
         <div id="ta-header-actions">
+          <button id="ta-clear" title="New chat">↺</button>
           <button id="ta-minimize" title="Minimize">−</button>
           <button id="ta-close" title="Close">×</button>
         </div>
@@ -93,6 +94,9 @@
     if (!lockedInsertTarget) lockedInsertTarget = findInputTarget();
 
     bindPanelEvents();
+
+    // Auto-generate as soon as the panel opens
+    setTimeout(() => onGenerate(), 100);
   }
 
   function bindPanelEvents() {
@@ -100,10 +104,28 @@
     panel.querySelector('#ta-close').addEventListener('click', closePanel);
     panel.querySelector('#ta-minimize').addEventListener('click', minimizePanel);
     panel.querySelector('#ta-expand').addEventListener('click', expandPanel);
+    panel.querySelector('#ta-clear').addEventListener('click', clearPanel);
     panel.querySelector('#ta-generate-btn').addEventListener('click', onGenerate);
     panel.querySelectorAll('.ta-tone-btn').forEach(btn => {
       btn.addEventListener('click', () => onGenerate(btn.dataset.tone));
     });
+    // Enter in the instructions box triggers generate (Shift+Enter = newline)
+    panel.querySelector('#ta-draft-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        onGenerate();
+      }
+    });
+  }
+
+  function clearPanel() {
+    lockedInsertTarget = null;
+    panel.querySelector('#ta-replies').innerHTML = '';
+    panel.querySelector('#ta-draft-input').value = '';
+    panel.querySelector('#ta-manual-input').value = '';
+    panel.querySelector('#ta-manual-section').style.display = 'none';
+    setStatus('Ready — auto-reading new conversation…');
+    setTimeout(() => onGenerate(), 100);
   }
 
   function closePanel() {
@@ -122,6 +144,7 @@
     panel.querySelector('#ta-header').style.display = 'flex';
     panel.querySelector('#ta-minimized-bar').style.display = 'none';
     panel.style.width = '';
+    setTimeout(() => onGenerate(), 100);
   }
 
   // ─── Drag ─────────────────────────────────────────────────────────────────
