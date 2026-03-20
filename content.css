@@ -237,6 +237,37 @@
   color: #89b4fa;
   font-weight: 600;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#ta-mic-btn {
+  background: none;
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  color: #cdd6f4;
+  font-size: 13px;
+  padding: 1px 5px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s;
+  margin-left: auto;
+}
+
+#ta-mic-btn:hover {
+  background: #313244;
+  border-color: #89b4fa;
+}
+
+#ta-mic-btn.ta-mic-active {
+  border-color: #f38ba8;
+  animation: ta-pulse 1s infinite;
+}
+
+@keyframes ta-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .ta-optional {

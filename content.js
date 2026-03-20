@@ -14,6 +14,8 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let lockedInsertTarget = null;
+  let recognition = null;
+  let isListening = false;
 
   // Track focus so we always know the last input the user touched
   document.addEventListener('focusin', (e) => {
@@ -62,7 +64,10 @@
 
         <!-- User instructions -->
         <div id="ta-draft-section">
-          <div class="ta-draft-label">Instructions <span class="ta-optional">(optional)</span></div>
+          <div class="ta-draft-label">
+            Instructions <span class="ta-optional">(optional)</span>
+            <button id="ta-mic-btn" title="Voice input — click to speak your instruction">🎤</button>
+          </div>
           <textarea id="ta-draft-input" rows="2" placeholder="e.g. Confirm the job and provide pricing, ask for more details, decline politely…"></textarea>
         </div>
 
@@ -105,6 +110,7 @@
     panel.querySelector('#ta-minimize').addEventListener('click', minimizePanel);
     panel.querySelector('#ta-expand').addEventListener('click', expandPanel);
     panel.querySelector('#ta-clear').addEventListener('click', clearPanel);
+    panel.querySelector('#ta-mic-btn').addEventListener('click', startVoiceInput);
     panel.querySelector('#ta-generate-btn').addEventListener('click', onGenerate);
     panel.querySelectorAll('.ta-tone-btn').forEach(btn => {
       btn.addEventListener('click', () => onGenerate(btn.dataset.tone));
@@ -128,7 +134,78 @@
     setTimeout(() => onGenerate(), 100);
   }
 
+  function startVoiceInput() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setStatus('⚠️ Speech recognition is not supported in this browser.');
+      return;
+    }
+
+    // If already listening, stop
+    if (isListening && recognition) {
+      recognition.stop();
+      return;
+    }
+
+    const micBtn = panel.querySelector('#ta-mic-btn');
+    const draftInput = panel.querySelector('#ta-draft-input');
+
+    recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      isListening = true;
+      micBtn.textContent = '🔴';
+      micBtn.classList.add('ta-mic-active');
+      micBtn.title = 'Click to stop recording';
+      setStatus('🎤 Listening… speak your instruction');
+      draftInput.value = '';
+    };
+
+    recognition.onresult = (event) => {
+      // Show interim + final results in real-time
+      const transcript = Array.from(event.results)
+        .map(r => r[0].transcript)
+        .join('');
+      draftInput.value = transcript;
+    };
+
+    recognition.onerror = (event) => {
+      isListening = false;
+      micBtn.textContent = '🎤';
+      micBtn.classList.remove('ta-mic-active');
+      micBtn.title = 'Voice input';
+      if (event.error === 'not-allowed') {
+        setStatus('⚠️ Microphone access denied. Allow mic for this site in your browser settings.');
+      } else if (event.error !== 'aborted') {
+        setStatus(`⚠️ Voice error: ${event.error}`);
+      }
+    };
+
+    recognition.onend = () => {
+      isListening = false;
+      micBtn.textContent = '🎤';
+      micBtn.classList.remove('ta-mic-active');
+      micBtn.title = 'Voice input';
+      // Auto-generate if we captured something
+      if (draftInput.value.trim()) {
+        onGenerate();
+      } else {
+        setStatus('No speech detected. Try again.');
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      setStatus(`⚠️ Could not start voice input: ${e.message}`);
+    }
+  }
+
   function closePanel() {
+    if (recognition && isListening) recognition.stop();
     if (panel) { panel.remove(); panel = null; }
   }
 
