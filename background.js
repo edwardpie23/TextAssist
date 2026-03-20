@@ -1,6 +1,8 @@
 // Background service worker — handles Groq API calls so the API key
 // never touches page content scripts.
 
+let voiceTabId = null;
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'GENERATE_REPLIES') {
     handleGenerateReplies(message.payload).then(sendResponse).catch(err => {
@@ -8,7 +10,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true; // keep channel open for async response
   }
+
+  if (message.type === 'VOICE_START') {
+    voiceTabId = sender.tab ? sender.tab.id : voiceTabId;
+    ensureOffscreen().then(() => {
+      chrome.runtime.sendMessage({ target: 'offscreen', type: 'VOICE_START' });
+    }).catch(err => {
+      if (voiceTabId) chrome.tabs.sendMessage(voiceTabId, { type: 'VOICE_ERROR', error: err.message });
+    });
+    return;
+  }
+
+  if (message.type === 'VOICE_STOP') {
+    chrome.runtime.sendMessage({ target: 'offscreen', type: 'VOICE_STOP' });
+    return;
+  }
+
+  // Relay results from offscreen doc → content script
+  if (['VOICE_STARTED', 'VOICE_RESULT', 'VOICE_ENDED', 'VOICE_ERROR'].includes(message.type)) {
+    if (voiceTabId) chrome.tabs.sendMessage(voiceTabId, message);
+    return;
+  }
 });
+
+async function ensureOffscreen() {
+  const existing = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (existing.length > 0) return;
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['USER_MEDIA'],
+    justification: 'Speech recognition for voice-to-instruction feature',
+  });
+}
 
 async function handleGenerateReplies({ conversation, styleProfile, apiKey, model, userDraft }) {
   if (!apiKey) {

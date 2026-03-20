@@ -14,8 +14,6 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let lockedInsertTarget = null;
-  let recognition = null;
-  let isListening = false;
 
   // Track focus so we always know the last input the user touched
   document.addEventListener('focusin', (e) => {
@@ -135,85 +133,25 @@
   }
 
   function startVoiceInput() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      setStatus('⚠️ Speech recognition is not supported in this browser.');
-      return;
-    }
-
-    // If already listening, stop
-    if (isListening && recognition) {
-      recognition.stop();
-      return;
-    }
-
     const micBtn = panel.querySelector('#ta-mic-btn');
     const draftInput = panel.querySelector('#ta-draft-input');
 
-    recognition = new SR();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    let finalTranscript = '';
-
-    recognition.onstart = () => {
-      isListening = true;
-      finalTranscript = '';
-      micBtn.textContent = '🔴';
-      micBtn.classList.add('ta-mic-active');
-      micBtn.title = 'Click to stop recording';
-      setStatus('🎤 Listening… click 🔴 when done');
-      draftInput.value = '';
-    };
-
-    recognition.onresult = (event) => {
-      // Accumulate confirmed final segments + show current interim segment
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        } else {
-          interim = event.results[i][0].transcript;
-        }
-      }
-      draftInput.value = finalTranscript + interim;
-    };
-
-    recognition.onerror = (event) => {
-      if (event.error === 'not-allowed') {
-        isListening = false;
-        micBtn.textContent = '🎤';
-        micBtn.classList.remove('ta-mic-active');
-        micBtn.title = 'Voice input';
-        setStatus('⚠️ Microphone access denied. Allow mic for this site in your browser settings.');
-      }
-      // Ignore 'no-speech' — continuous mode keeps going
-    };
-
-    recognition.onend = () => {
-      // onend fires when stopped via recognition.stop() (user clicked button)
-      isListening = false;
-      micBtn.textContent = '🎤';
-      micBtn.classList.remove('ta-mic-active');
-      micBtn.title = 'Voice input';
-      // Auto-generate if we captured something
-      if (draftInput.value.trim()) {
-        onGenerate();
-      } else {
-        setStatus('No speech detected. Try again.');
-      }
-    };
-
-    try {
-      recognition.start();
-    } catch (e) {
-      setStatus(`⚠️ Could not start voice input: ${e.message}`);
+    if (micBtn.classList.contains('ta-mic-active')) {
+      // Stop recording
+      chrome.runtime.sendMessage({ type: 'VOICE_STOP' });
+      return;
     }
+
+    // Start recording
+    draftInput.value = '';
+    micBtn.textContent = '🔴';
+    micBtn.classList.add('ta-mic-active');
+    micBtn.title = 'Click to stop recording';
+    setStatus('🎤 Listening… click 🔴 when done');
+    chrome.runtime.sendMessage({ type: 'VOICE_START' });
   }
 
   function closePanel() {
-    if (recognition && isListening) recognition.stop();
     if (panel) { panel.remove(); panel = null; }
   }
 
@@ -723,6 +661,46 @@
     if (msg.type === 'OPEN_PANEL') {
       if (!panel) createPanel();
       else expandPanel();
+    }
+
+    if (!panel) return;
+    const micBtn = panel.querySelector('#ta-mic-btn');
+    const draftInput = panel.querySelector('#ta-draft-input');
+    if (!micBtn) return;
+
+    if (msg.type === 'VOICE_STARTED') {
+      micBtn.textContent = '🔴';
+      micBtn.classList.add('ta-mic-active');
+      setStatus('🎤 Listening… click 🔴 when done');
+    }
+
+    if (msg.type === 'VOICE_RESULT') {
+      draftInput.value = msg.transcript;
+    }
+
+    if (msg.type === 'VOICE_ENDED') {
+      micBtn.textContent = '🎤';
+      micBtn.classList.remove('ta-mic-active');
+      micBtn.title = 'Voice input';
+      if (msg.transcript) {
+        draftInput.value = msg.transcript;
+        onGenerate();
+      } else {
+        setStatus('No speech detected. Try again.');
+      }
+    }
+
+    if (msg.type === 'VOICE_ERROR') {
+      micBtn.textContent = '🎤';
+      micBtn.classList.remove('ta-mic-active');
+      micBtn.title = 'Voice input';
+      if (msg.error === 'not-allowed') {
+        setStatus('⚠️ Microphone access denied. Check browser settings.');
+      } else if (msg.error === 'not-supported') {
+        setStatus('⚠️ Speech recognition not supported in this browser.');
+      } else {
+        setStatus(`⚠️ Voice error: ${msg.error}`);
+      }
     }
   });
 })();
