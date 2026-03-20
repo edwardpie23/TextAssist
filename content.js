@@ -151,40 +151,48 @@
     const draftInput = panel.querySelector('#ta-draft-input');
 
     recognition = new SR();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
+    let finalTranscript = '';
+
     recognition.onstart = () => {
       isListening = true;
+      finalTranscript = '';
       micBtn.textContent = '🔴';
       micBtn.classList.add('ta-mic-active');
       micBtn.title = 'Click to stop recording';
-      setStatus('🎤 Listening… speak your instruction');
+      setStatus('🎤 Listening… click 🔴 when done');
       draftInput.value = '';
     };
 
     recognition.onresult = (event) => {
-      // Show interim + final results in real-time
-      const transcript = Array.from(event.results)
-        .map(r => r[0].transcript)
-        .join('');
-      draftInput.value = transcript;
+      // Accumulate confirmed final segments + show current interim segment
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interim = event.results[i][0].transcript;
+        }
+      }
+      draftInput.value = finalTranscript + interim;
     };
 
     recognition.onerror = (event) => {
-      isListening = false;
-      micBtn.textContent = '🎤';
-      micBtn.classList.remove('ta-mic-active');
-      micBtn.title = 'Voice input';
       if (event.error === 'not-allowed') {
+        isListening = false;
+        micBtn.textContent = '🎤';
+        micBtn.classList.remove('ta-mic-active');
+        micBtn.title = 'Voice input';
         setStatus('⚠️ Microphone access denied. Allow mic for this site in your browser settings.');
-      } else if (event.error !== 'aborted') {
-        setStatus(`⚠️ Voice error: ${event.error}`);
       }
+      // Ignore 'no-speech' — continuous mode keeps going
     };
 
     recognition.onend = () => {
+      // onend fires when stopped via recognition.stop() (user clicked button)
       isListening = false;
       micBtn.textContent = '🎤';
       micBtn.classList.remove('ta-mic-active');
