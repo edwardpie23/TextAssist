@@ -14,6 +14,8 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let lockedInsertTarget = null;
+  let isGenerating = false; // in-flight guard so double-clicks don't double-fire API calls
+  let isVoiceActive = false; // tracks whether the offscreen recognizer is recording
 
   // Track focus so we always know the last input the user touched
   document.addEventListener('focusin', (e) => {
@@ -152,7 +154,13 @@
   }
 
   function closePanel() {
+    // Stop any active voice recording before tearing down
+    if (isVoiceActive) {
+      try { chrome.runtime.sendMessage({ type: 'VOICE_STOP' }); } catch (_) {}
+      isVoiceActive = false;
+    }
     if (panel) { panel.remove(); panel = null; }
+    lockedInsertTarget = null;
   }
 
   function minimizePanel() {
@@ -167,7 +175,10 @@
     panel.querySelector('#ta-header').style.display = 'flex';
     panel.querySelector('#ta-minimized-bar').style.display = 'none';
     panel.style.width = '';
-    setTimeout(() => onGenerate(), 100);
+    // Only auto-generate if there are no replies yet — preserve the user's state
+    // when they just minimize and re-expand.
+    const hasReplies = panel.querySelector('#ta-replies').children.length > 0;
+    if (!hasReplies) setTimeout(() => onGenerate(), 100);
   }
 
   // ─── Drag ─────────────────────────────────────────────────────────────────
@@ -200,9 +211,9 @@
   // ─── Generate Replies ─────────────────────────────────────────────────────
 
   async function onGenerate(toneModifier) {
+    if (isGenerating) return; // ignore double-clicks while a request is in flight
     const tone = typeof toneModifier === 'string' ? toneModifier : null;
 
-    console.log('[TA] Generate clicked');
     // Re-detect insert target every time in case focus changed
     lockedInsertTarget = lockedInsertTarget || findInputTarget();
 
@@ -226,7 +237,10 @@
 
     const userDraft = panel.querySelector('#ta-draft-input')?.value?.trim() || '';
     setStatus(`Generating replies based on ${conversation.length} messages…`);
-    panel.querySelector('#ta-generate-btn').disabled = true;
+
+    isGenerating = true;
+    const generateBtn = panel.querySelector('#ta-generate-btn');
+    generateBtn.disabled = true;
 
     try {
       const settings = await getSettings();
@@ -244,15 +258,17 @@
 
       const response = await chrome.runtime.sendMessage({ type: 'GENERATE_REPLIES', payload });
 
+      if (!response) { setStatus('❌ No response from background. Try again.'); return; }
       if (response.error) { setStatus(`❌ ${response.error}`); return; }
       if (!response.replies || !response.replies.length) { setStatus('No replies generated. Try again.'); return; }
 
-      setStatus('Click a reply to insert it into the chat box:');
+      setStatus('Click a reply to copy it:');
       setReplies(response.replies);
     } catch (err) {
       setStatus(`❌ ${err.message}`);
     } finally {
-      panel.querySelector('#ta-generate-btn').disabled = false;
+      isGenerating = false;
+      if (panel) panel.querySelector('#ta-generate-btn').disabled = false;
     }
   }
 
@@ -291,7 +307,12 @@
   }
 
   function escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // ─── Text Insertion ───────────────────────────────────────────────────────
@@ -347,23 +368,16 @@
     }
 
     const candidates = [...walkForInputs(document)];
-    // Log each candidate so we can see what's found vs filtered
-    candidates.forEach((el, i) => {
-      const cls = (el.className || '').toString().substring(0, 60);
-      const ph = (el.placeholder || el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '');
-      const r = el.getBoundingClientRect();
-      console.log(`[TA] candidate[${i}]: ${el.tagName} ce="${el.getAttribute('contenteditable')}" class="${cls}" ph="${ph}" vis=${r.width>0&&r.height>0} ours=${isOurElement(el)}`);
-    });
 
     // Priority 1: Sendbird message input (most specific)
     for (const el of candidates) {
       const cls = (el.className || '').toString();
       const ph = (el.placeholder || el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
       if (cls.includes('sendbird-message-input') || cls.includes('message-input')) {
-        if (!isOurElement(el) && isVisible(el)) { console.log('[TA] matched P1-sendbird'); return el; }
+        if (!isOurElement(el) && isVisible(el)) return el;
       }
       if (ph.includes('message') || ph.includes('reply') || ph.includes('type')) {
-        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) { console.log('[TA] matched P1-ph'); return el; }
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
@@ -379,32 +393,31 @@
     ];
     for (const sel of messagePlaceholders) {
       for (const el of document.querySelectorAll(sel)) {
-        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) { console.log('[TA] matched P2:', sel); return el; }
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
     // Priority 3: role-based contenteditable
     for (const el of candidates) {
       if (el.getAttribute('role') === 'textbox' && el.isContentEditable) {
-        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) { console.log('[TA] matched P3-textbox'); return el; }
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
     // Priority 4: any visible textarea
     for (const el of candidates) {
       if (el.tagName === 'TEXTAREA' && !el.readOnly && !el.disabled) {
-        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) { console.log('[TA] matched P4-textarea'); return el; }
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
     // Priority 5: any contenteditable
     for (const el of candidates) {
       if (el.isContentEditable) {
-        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) { console.log('[TA] matched P5-ce'); return el; }
+        if (!isOurElement(el) && isVisible(el) && !isSearchInput(el)) return el;
       }
     }
 
-    console.log('[TA] findInputTarget: no match');
     return null;
   }
 
@@ -413,21 +426,6 @@
   function isVisible(el) {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
-  }
-
-  function isReallyVisible(el) {
-    if (!isVisible(el)) return false;
-    let node = el;
-    while (node && node !== document.body) {
-      const tag = node.tagName?.toLowerCase();
-      if (['script', 'style', 'pre', 'code', 'noscript', 'template'].includes(tag)) return false;
-      node = node.parentElement;
-    }
-    try {
-      const s = window.getComputedStyle(el);
-      if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-    } catch (_) {}
-    return true;
   }
 
   // Returns true if a string looks like a real chat message (not code, not UI labels)
@@ -475,8 +473,6 @@
   }
 
   function readConversation() {
-    console.log('[TA] readConversation called');
-
     // ── Fast path: Housecall Pro / Sendbird direct selector ──────────────────
     // Messages live in [data-message-bubble="true"] > … > p elements.
     // Bubbles with class "mine" are sent by the user; others are from the customer.
@@ -501,20 +497,17 @@
       if (msgs.length > 0) {
         // Sort by timestamp, fall back to vertical position
         msgs.sort((a, b) => (a.ts || a.top) - (b.ts || b.top));
-        console.log('[TA] HCP direct read:', msgs.length, 'messages');
         return msgs;
       }
     }
 
     // ── Fallback: position-based scan ────────────────────────────────────────
     const inputEl = findInputTarget();
-    console.log('[TA] findInputTarget =', inputEl ? inputEl.tagName + ' ' + (inputEl.className||'').substring(0,40) : 'NULL');
     if (!inputEl) return [];
 
     const inputRect = inputEl.getBoundingClientRect();
     const inputCenterX = (inputRect.left + inputRect.right) / 2;
     const paneLeft = getChatPaneLeft(inputEl);
-    console.log('[TA] readConversation: inputRect=', Math.round(inputRect.left), Math.round(inputRect.top), 'paneLeft=', Math.round(paneLeft));
 
     const seen = new Set();
     const found = [];
@@ -529,45 +522,31 @@
     }
 
     const SKIP_TAGS = new Set(['SCRIPT','STYLE','HEAD','META','LINK','SVG','PATH','G','DEFS','NOSCRIPT','IFRAME','CANVAS','VIDEO','AUDIO','IMG','INPUT','TEXTAREA','SELECT','BUTTON','OPTION']);
-    let dbgTotal = 0, dbgMsg = 0, dbgRect = 0, dbgAbove = 0, dbgHdr = 0, dbgX = 0;
     for (const el of walkAll(document)) {
       if (SKIP_TAGS.has(el.tagName)) continue;
       if (isOurElement(el)) continue;
       if (el === inputEl || el.contains(inputEl) || inputEl.contains(el)) continue;
-      dbgTotal++;
 
       const text = el.textContent.trim();
       if (!looksLikeMessage(text)) continue;
       if (seen.has(text)) continue;
-      dbgMsg++;
 
       // Skip wrapper elements: if a direct child carries the exact same text,
       // this node is just a container — the child will be picked up instead.
       if ([...el.children].some(c => c.textContent.trim() === text)) continue;
 
       const r = el.getBoundingClientRect();
-      if (r.width < 20 || r.height < 4) { dbgRect++; continue; }
-
-      // Must be above the input
-      if (r.bottom > inputRect.top + 10) { dbgAbove++; continue; }
-
-      // Skip page-header elements pinned near the top of the viewport
-      if (r.top < 50) { dbgHdr++; continue; }
+      if (r.width < 20 || r.height < 4) continue;
+      if (r.bottom > inputRect.top + 10) continue; // must be above the input
+      if (r.top < 50) continue; // skip page-header elements pinned near the viewport top
 
       // The element's center X must fall within the chat pane.
-      // paneLeft is the left edge of the panel that contains the textarea;
-      // sidebar / thread-list elements are further left and get excluded.
       const elCenterX = r.left + r.width / 2;
-      if (elCenterX < paneLeft || elCenterX > inputRect.right + 80) {
-        dbgX++;
-        console.log('[TA] X-filtered:', el.tagName, el.className.substring(0,40), 'cx='+Math.round(elCenterX), 'text='+text.substring(0,40));
-        continue;
-      }
+      if (elCenterX < paneLeft || elCenterX > inputRect.right + 80) continue;
 
       seen.add(text);
       found.push({ el, text, top: r.top, bottom: r.bottom, height: r.height });
     }
-    console.log('[TA] scan done: total='+dbgTotal+' passedMsg='+dbgMsg+' rect='+dbgRect+' below='+dbgAbove+' hdr='+dbgHdr+' x='+dbgX+' found='+found.length);
 
     if (found.length === 0) return [];
 
@@ -640,7 +619,20 @@
 
   // ─── Trigger Button ───────────────────────────────────────────────────────
 
+  // Skip frames that are clearly not the chat: tiny iframes (ads, tracking pixels,
+  // embedded widgets) and frames with no body. This prevents multiple ✦ buttons
+  // appearing on pages that have lots of iframes.
+  function shouldInjectInThisFrame() {
+    if (window === window.top) return true; // always inject in top frame
+    if (!document.body) return false;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w < 200 || h < 200) return false; // too small to be a chat pane
+    return true;
+  }
+
   function createTriggerButton() {
+    if (!shouldInjectInThisFrame()) return;
     if (document.getElementById('textassist-trigger')) return;
     const btn = document.createElement('button');
     btn.id = 'textassist-trigger';
@@ -669,6 +661,7 @@
     if (!micBtn) return;
 
     if (msg.type === 'VOICE_STARTED') {
+      isVoiceActive = true;
       micBtn.textContent = '🔴';
       micBtn.classList.add('ta-mic-active');
       setStatus('🎤 Listening… click 🔴 when done');
@@ -679,6 +672,7 @@
     }
 
     if (msg.type === 'VOICE_ENDED') {
+      isVoiceActive = false;
       micBtn.textContent = '🎤';
       micBtn.classList.remove('ta-mic-active');
       micBtn.title = 'Voice input';
@@ -691,6 +685,7 @@
     }
 
     if (msg.type === 'VOICE_ERROR') {
+      isVoiceActive = false;
       micBtn.textContent = '🎤';
       micBtn.classList.remove('ta-mic-active');
       micBtn.title = 'Voice input';
